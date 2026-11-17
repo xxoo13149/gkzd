@@ -177,6 +177,8 @@
   2. `github.build=built`——Pages 已构建该 commit（API 校验，可靠）；
   3. `github.pages_probe`——首尾 4KB 抽查，`null` 属 CDN 传输受限，如实汇报不算失败。
 - **`GK_SKIP_PUBLISH=1`**（定时会话硬规则）：跳过 `ensure_service()`，绝不重新发布 WorkBuddy 分享链接；本地验证改用 `GK_LOCAL_URL=file:///workspace/gkzd-site/index.html`。
+- **工作克隆模式防假成功**（2026-11-17 全新环境彩排实测）：定时任务场景 `GK_SRC=/tmp/gkzd-gh/src` 即工作克隆自身。两条硬约束写进 `sync_ima.py`：① `gh_mirror_files()` 逐文件 `realpath` 判重，绝不自己复制自己（否则 SameFileError、推送必失败）；② `gh_prepare()` 在该模式下**禁止 fetch/reset/clean**——发版中途 reset 会抹掉本会话 `--add` 写入的痕迹与兜底刷新，随后提交出「无变化」的假成功。同步远程状态是任务流程步骤 0c 的职责。
+- 静态兜底内嵌倒计时快照使逐次构建产物天然不同（秒级）；幂等判断只看 `remote_match`/`build`，不用「构建字节不变」当判据。令牌：IMA 知识库文档「GitHub 同步令牌」（`gho_`/`ghp_`/`github_pat_` 前缀均认），任务步骤 0a 读取。
 - 定时任务 token：fine-grained PAT（只授权 gkzd 仓库、Contents RW），由用户存于 IMA 知识库文档「GitHub 同步令牌」，任务每晚会话读取后 `export GITHUB_TOKEN`；取不到如实报错终止。token 绝不写入仓库、网页、恢复包或汇报消息。
 - WorkBuddy 旧链接（`aea6f47a0565841ad...`）降级为备用入口，只由用户主会话手动维护；定时任务任何情况下不碰它。
 - 如实边界：GitHub Pages 在中国大陆直连可能时快时慢甚至打不开，用户已知情并将亲自实测；若不可用，备用入口仍是 WorkBuddy 链接。
