@@ -5,7 +5,7 @@
 执行步骤：
 
 0. 环境自举（必做，先于任何其它步骤）：
-   a. 读 GitHub token：调 mcp__ima__get_knowledge_list（knowledge_base_id=ima_kb_d6gay3Kf, limit=30, sort_type=UPDATE_TS_DESC_SORT_TYPE）找标题为「GitHub 同步令牌」的文档，用 mcp__ima__fetch_media_content 取全文，从中取出以 github_pat_ 或 ghp_ 开头的整串令牌（一整行，不带任何多余标点）。找不到该文档、取不到令牌、或 IMA 工具未授权 → 如实报「令牌获取失败」并终止，不伪造、不发版。
+   a. 读 GitHub token：调 mcp__ima__get_knowledge_list（knowledge_base_id=ima_kb_d6gay3Kf, limit=30, sort_type=UPDATE_TS_DESC_SORT_TYPE）找标题为「GitHub 同步令牌」的文档，用 mcp__ima__fetch_media_content 取全文，从中取出以 github_pat_、ghp_ 或 gho_ 开头的整串令牌（一整行，40 字符上下，不带任何多余标点）。找不到该文档、取不到令牌、或 IMA 工具未授权 → 如实报「令牌获取失败」并终止，不伪造、不发版。
    b. export GITHUB_TOKEN=<令牌>
    c. 工程恢复 = 克隆仓库：若 /tmp/gkzd-gh/.git 不存在，执行 git clone https://oauth2:${GITHUB_TOKEN}@github.com/xxoo13149/gkzd.git /tmp/gkzd-gh；已存在则 git -C /tmp/gkzd-gh fetch origin main && git -C /tmp/gkzd-gh reset --hard origin/main。克隆或更新失败 → 如实报错并终止。
    d. export GK_SRC=/tmp/gkzd-gh/src GK_SITE=/workspace/gkzd-site GK_SKIP_PUBLISH=1 GK_LOCAL_URL=file:///workspace/gkzd-site/index.html
