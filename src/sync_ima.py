@@ -1,0 +1,451 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+sync_ima.py — 公考作战台 IMA 学习痕迹同步（本地机械流程固化）
+
+设计意图
+--------
+定时任务触发的是一个 Agent 会话，只让它做「需要判断」的部分：
+  读 IMA 知识库 → 找出新增「学习痕迹 YYYY-MM-DD」文档 → 按 DESIGN.md
+  映射规则把每篇转成一个痕迹对象 → 写成 JSON 数组文件。
+剩下「容易出错、必须稳定」的部分全部固化在本脚本：
+  按 date 去重 → 追加 traces.js → 刷新 index.html 静态兜底 →
+  同步部署目录（覆盖即上线）→ 真实浏览器验证 → 输出 JSON 报告。
+
+用法
+----
+  python3 sync_ima.py --add /tmp/new_traces.json    # 常规：有新增才发版
+  python3 sync_ima.py --deploy-only                 # 源码已手工改过，只发版
+  python3 sync_ima.py --check                      # 只读体检，不改动任何文件
+
+JSON 输入格式（数组，字段缺失一律按 null 处理，不做默认值兜底）：
+  [{"id":"ima-2026-11-12","date":"2026-11-12","type":"刷题",
+    "title":"...","body":"...","note":"...","minutes":null,
+    "questions":null,"score":null,"src":"学习痕迹 2026-11-12","by":"ima"}]
+
+约定见 /workspace/gkzd/DESIGN.md「后续改动约定」。
+"""
+import argparse
+import asyncio
+import hashlib
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+import urllib.request
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from build import build_html, build as build_single_file
+
+SRC = os.environ.get("GK_SRC", "/workspace/gkzd")
+SITE = os.environ.get("GK_SITE", "/workspace/gkzd-site")
+PUBLISH_JS = "/root/.codebuddy/skills/sites/scripts/publish.js"
+CHROMIUM = "/usr/bin/chromium"
+LOCAL_URL = "http://127.0.0.1:3000/index.html"
+FILES = ["index.html", "styles.css", "app.js", "config.js", "traces.js"]
+
+# 由 JS 渲染、需要写进静态兜底的容器
+IDS = ["topDate", "calSub", "cdLine", "phaseLine", "streakLine", "calNav", "calGrid", "stats",
+       "taskRing", "taskList", "quoteText", "quoteSrc", "todayFlag",
+       "nextLabel", "nextDesc", "nextDate", "nextLeft", "scoreNow", "scoreTarget", "scoreGap",
+       "milestoneList", "traceFilters", "traceList", "fType", "examPresets"]
+
+FIELDS = ["id", "date", "type", "title", "body", "note", "minutes", "questions", "score", "src", "by"]
+
+
+def log(msg):
+    print("[sync] " + msg, file=sys.stderr, flush=True)
+
+
+def js_val(v):
+    if v is None:
+        return "null"
+    if isinstance(v, bool):
+        return "true" if v else "false"
+    if isinstance(v, (int, float)):
+        return str(v)
+    s = str(v).replace("\\", "\\\\").replace("'", "\\'").replace("\n", "\\n").replace("\r", "")
+    return "'" + s + "'"
+
+
+def to_js_obj(t):
+    """按 traces.js 现有排版生成单个对象字面量；取不到的字段一律 null。"""
+    g = lambda k: js_val(t.get(k))
+    return (
+        "  {\n"
+        f"    id: {g('id')}, date: {g('date')}, type: {g('type')},\n"
+        f"    title: {g('title')},\n"
+        f"    body: {g('body')},\n"
+        f"    note: {g('note')},\n"
+        f"    minutes: {g('minutes')}, questions: {g('questions')}, score: {g('score')},\n"
+        f"    src: {g('src')}, by: {g('by')}\n"
+        "  },\n"
+    )
+
+
+def read_existing_dates(path):
+    text = open(path, encoding="utf-8").read()
+    # 只解析 window.GK_TRACES = [...] 数组本体，忽略文件头注释里的示例 date
+    marker = "window.GK_TRACES = ["
+    body = text[text.index(marker):] if marker in text else text
+    return set(re.findall(r"date:\s*'(\d{4}-\d{2}-\d{2})'", body)), text
+
+
+def add_traces(json_path):
+    """返回 (新增的 date 列表, 是否改动文件)。"""
+    if not json_path:
+        return [], False
+    raw = json.load(open(json_path, encoding="utf-8"))
+    if not isinstance(raw, list):
+        raise ValueError("--add 必须是 JSON 数组")
+    path = os.path.join(SRC, "traces.js")
+    existing, text = read_existing_dates(path)
+    fresh = []
+    for t in raw:
+        d = t.get("date")
+        if not d or not re.fullmatch(r"\d{4}-\d{2}-\d{2}", str(d)):
+            log(f"跳过无效 date: {d!r}")
+            continue
+        if d in existing:
+            log(f"已存在，跳过: {d}")
+            continue
+        existing.add(d)
+        fresh.append(t)
+    if not fresh:
+        return [], False
+    # 按 date 倒序（与页面一致），插到数组最前
+    fresh.sort(key=lambda x: str(x.get("date")), reverse=True)
+    block = "".join(to_js_obj(t) for t in fresh)
+    marker = "window.GK_TRACES = [\n"
+    if marker not in text:
+        raise RuntimeError("traces.js 里找不到 window.GK_TRACES = [ 起始标记")
+    text = text.replace(marker, marker + block, 1)
+    open(path, "w", encoding="utf-8").write(text)
+    log(f"追加 {len(fresh)} 条: {[t.get('date') for t in fresh]}")
+    return [t.get("date") for t in fresh], True
+
+
+def sha(path):
+    return hashlib.sha256(open(path, "rb").read()).hexdigest()[:12]
+
+
+def files_differ():
+    """单文件部署：直接比较「当前源文件重新打包」与部署目录 index.html。
+
+    发布链接靠 cookie 鉴权，子资源在 iPad/移动端会被 403 拦截，
+    因此部署目录只认一个零子资源的单文件 HTML；其他文件不参与一致性判断。
+    """
+    try:
+        html, _ = build_html()
+        dst = os.path.join(SITE, "index.html")
+        if not os.path.exists(dst):
+            return ["index.html(单文件缺失)"]
+        cur = open(dst, "rb").read()
+        return [] if cur == html.encode("utf-8") else ["index.html(单文件过期)"]
+    except Exception as e:
+        return ["打包失败: " + str(e)[:120]]
+
+
+def replace_container(html, id_, inner):
+    """按同名标签配平替换容器内内容，返回新 HTML；失败返回 None。
+
+    不能用 `(<tag id=...>)(.*?)(</tag>)` 这种非贪婪正则：
+    #calGrid 内部第一个 `</div>` 是占位格自己的闭合标签，正则会在那里截断，
+    导致每次刷新只换掉开头一小段、旧格子全部残留，越积越多（曾累积 8 份 42 格）。
+    """
+    m = re.search(r'<([a-zA-Z0-9]+)\b[^>]*\bid="' + re.escape(id_) + r'"[^>]*>', html)
+    if not m:
+        return None
+    tag = m.group(1)
+    start = m.end()
+    op = re.compile(r'<' + re.escape(tag) + r'\b[^>]*?(?<!/)>', re.I | re.S)
+    cl = re.compile(r'</' + re.escape(tag) + r'\s*>', re.I)
+    depth, i = 1, start
+    while depth > 0:
+        no, nc = op.search(html, i), cl.search(html, i)
+        if nc is None:
+            return None
+        if no and no.start() < nc.start():
+            depth += 1
+            i = no.end()
+        else:
+            depth -= 1
+            if depth == 0:
+                return html[:start] + inner + html[nc.start():]
+            i = nc.end()
+    return None
+
+
+def refresh_fallback():
+    """用真实浏览器渲染后的 DOM 覆盖 index.html 的 24 个容器（幂等）。"""
+    from playwright.async_api import async_playwright
+
+    async def grab():
+        async with async_playwright() as p:
+            b = await p.chromium.launch(headless=True, executable_path=CHROMIUM,
+                                        args=["--no-sandbox", "--disable-dev-shm-usage"])
+            pg = await b.new_page(viewport={"width": 1440, "height": 900})
+            errs = []
+            pg.on("pageerror", lambda e: errs.append(str(e)))
+            await pg.goto("file://" + os.path.join(SRC, "index.html"), wait_until="load", timeout=30000)
+            # 清掉浏览器本地数据，保证静态兜底是纯种子态
+            await pg.evaluate("() => { try{localStorage.clear()}catch(e){} }")
+            await pg.reload(wait_until="load", timeout=30000)
+            await pg.wait_for_timeout(2400)  # 等数字滚动、GSAP 结束
+            data = await pg.evaluate("""(ids) => {
+              const o = {};
+              ids.forEach(id => { const e = document.getElementById(id); o[id] = e ? e.innerHTML : null; });
+              const f = document.getElementById('scoreFill'), d = document.getElementById('scoreDot');
+              o._fill = f ? f.style.width : '';
+              o._dot  = d ? d.style.left : '';
+              return o;
+            }""", IDS)
+            await b.close()
+            return data, errs
+
+    data, errs = asyncio.run(grab())
+    if errs:
+        log("导出时页面报错: " + "; ".join(errs[:3]))
+
+    path = os.path.join(SRC, "index.html")
+    html = open(path, encoding="utf-8").read()
+    done, skipped = [], []
+    for id_, inner in data.items():
+        if id_.startswith("_") or inner is None:
+            continue
+        new_html = replace_container(html, id_, inner)
+        if new_html is None:
+            skipped.append(id_)
+            continue
+        html = new_html
+        done.append(id_)
+    html = re.sub(r'id="scoreFill"[^>]*>', 'id="scoreFill" style="width:%s">' % data["_fill"], html, count=1)
+    html = re.sub(r'id="scoreDot"[^>]*>', 'id="scoreDot" style="left:%s">' % data["_dot"], html, count=1)
+    # 发版前洁净度断言：源 index.html 里只有 calGrid 含 data-day，
+    # 数量必须恰好等于本次导出，否则说明容器外还有历史残留格子（会竖排），拒绝上线。
+    expect = (data.get("calGrid") or "").count("data-day=")
+    actual = html.count("data-day=")
+    if expect and actual != expect:
+        raise RuntimeError("静态兜底格子残留：导出 %d 格，HTML 内却有 %d 个 data-day，拒绝发版" % (expect, actual))
+    open(path, "w", encoding="utf-8").write(html)
+    log(f"静态兜底刷新: {len(done)} 容器 / 跳过 {skipped} / 格子 {actual} 个（校验通过）")
+    return {"containers": len(done), "skipped": skipped, "cells": actual, "pageerrors": len(errs)}
+
+
+def bump_versions():
+    """按本地资源内容生成版本号，改写 index.html 的 ?v=。
+    内容不变则版本不变（缓存有效），任一文件变了则自动破缓存，
+    避免 App 内置浏览器长期拿旧 styles.css / app.js 导致格历塌陷。"""
+    path = os.path.join(SRC, "index.html")
+    html = open(path, encoding="utf-8").read()
+    ver = {}
+    for f in ["styles.css", "config.js", "traces.js", "app.js"]:
+        fp = os.path.join(SRC, f)
+        if os.path.exists(fp):
+            ver[f] = hashlib.md5(open(fp, "rb").read()).hexdigest()[:10]
+    for f, h in ver.items():
+        html = re.sub(r'((?:href|src)="' + re.escape(f) + r')\?v=[^"]*(")',
+                      lambda m, h=h: m.group(1) + "?v=" + h + m.group(2), html)
+    open(path, "w", encoding="utf-8").write(html)
+    return ver
+
+
+def deploy():
+    """生成零子资源单文件并上线（覆盖 index.html 即生效，链接不变）。
+
+    不再复制 styles.css / *.js / assets —— 这些外网子资源在 iPad Safari 与
+    移动 WebView 上会被 403 拦截。全部内联后页面不发出任何子资源请求。
+    """
+    ver = bump_versions()          # 源目录仍维护 ?v=，供 file:// 本地预览破缓存
+    out, stats = build_single_file()
+    log("已生成零子资源单文件 %s (%d B) | 版本号 %s"
+        % (out, stats["total_bytes"], json.dumps(ver, ensure_ascii=False)))
+    return {"dir": SITE, "single_file": True, "versions": ver, **stats}
+
+
+def http_ok(url, timeout=8):
+    try:
+        with urllib.request.urlopen(url, timeout=timeout) as r:
+            return r.status == 200
+    except Exception:
+        return False
+
+
+def ensure_service():
+    if http_ok(LOCAL_URL):
+        return {"running": True, "action": "none"}
+    log("3000 服务未响应，重新发布")
+    r = subprocess.run(["node", PUBLISH_JS, "--dir", SITE, "--language", "static"],
+                       capture_output=True, text=True, timeout=180)
+    tail = (r.stdout or "").strip().splitlines()
+    out = tail[-1] if tail else ""
+    try:
+        parsed = json.loads(out)
+    except Exception:
+        parsed = {"raw": out, "stderr": (r.stderr or "")[-300:]}
+    return {"running": http_ok(LOCAL_URL), "action": "republish", "publish": parsed,
+            "exit": r.returncode}
+
+
+def verify_online(share_url=None):
+    """真实浏览器：JS 开启验交互，JS 关闭验静态兜底。"""
+    from playwright.async_api import async_playwright
+
+    async def run():
+        async with async_playwright() as p:
+            b = await p.chromium.launch(headless=True, executable_path=CHROMIUM,
+                                        args=["--no-sandbox", "--disable-dev-shm-usage"])
+            res = {}
+            # A. JS 开启
+            ctx = await b.new_context(viewport={"width": 1440, "height": 900})
+            pg = await ctx.new_page()
+            errs = []
+            pg.on("pageerror", lambda e: errs.append(str(e)))
+            pg.on("console", lambda m: errs.append("console." + m.type + " " + m.text) if m.type == "error" else None)
+            await pg.goto(LOCAL_URL, wait_until="networkidle", timeout=30000)
+            await pg.wait_for_timeout(1600)
+            res["js_on"] = await pg.evaluate("""() => ({
+              bg: getComputedStyle(document.body).backgroundColor,
+              cells: document.querySelectorAll('#calGrid .cell').length,
+              done: document.querySelectorAll('#calGrid .cell--done').length,
+              traces: document.querySelectorAll('#traceList > li').length,
+              tasks: document.querySelectorAll('#taskList .task').length,
+              delBtns: document.querySelectorAll('.trace__del').length,
+              stats: (document.querySelector('#stats')||{}).innerText.replace(/\\s+/g,' ').trim(),
+              icons: document.querySelectorAll('svg.lucide').length,
+              overflowX: document.documentElement.scrollWidth - document.documentElement.clientWidth
+            })""")
+            # 交互：点一个留痕格 → 开抽屉；Esc 关
+            cell = await pg.query_selector("#calGrid .cell--done")
+            if cell:
+                await cell.click()
+                await pg.wait_for_timeout(300)
+                res["drawer_opens"] = await pg.evaluate("()=>document.querySelector('#drawer').classList.contains('is-open')")
+                await pg.keyboard.press("Escape")
+            # 交互：两段式删除 → 取消（不破坏数据）
+            delbtn = await pg.query_selector("#traceList > li:first-child .trace__del")
+            if delbtn:
+                await delbtn.click()
+                await pg.wait_for_timeout(200)
+                res["delete_confirm"] = await pg.evaluate("()=>document.querySelectorAll('.trace__confirm').length>0")
+                cancel = await pg.query_selector("[data-del-cancel]")
+                if cancel:
+                    await cancel.click()
+            res["js_on_errors"] = errs[:5]
+            await ctx.close()
+            # B. JS 关闭（模拟预览面板）
+            ctx2 = await b.new_context(viewport={"width": 1440, "height": 900}, java_script_enabled=False)
+            pg2 = await ctx2.new_page()
+            await pg2.goto(LOCAL_URL, wait_until="load", timeout=30000)
+            await pg2.wait_for_timeout(500)
+            res["js_off"] = await pg2.evaluate("""() => ({
+              cells: document.querySelectorAll('#calGrid .cell').length,
+              done: document.querySelectorAll('#calGrid .cell--done').length,
+              traces: document.querySelectorAll('#traceList > li').length,
+              delBtns: document.querySelectorAll('.trace__del').length,
+              overflowX: document.documentElement.scrollWidth - document.documentElement.clientWidth
+            })""")
+            await ctx2.close()
+            # C. 模拟 iPad / 移动 WebView：所有非文档请求被 403 拦截
+            #    （等价于 cookie 被拒后子资源全挂）。单文件页面此时应零请求且完整。
+            ctx3 = await b.new_context(viewport={"width": 1024, "height": 768})
+            pg3 = await ctx3.new_page()
+            blocked = []
+
+            async def deny(route, blocked=blocked):
+                if route.request.resource_type == "document":
+                    await route.continue_()
+                else:
+                    blocked.append(route.request.url.split("/")[-1][:40])
+                    await route.abort()
+
+            await pg3.route("**/*", deny)
+            e3 = []
+            pg3.on("pageerror", lambda e: e3.append(str(e)))
+            await pg3.goto(LOCAL_URL, wait_until="load", timeout=30000)
+            await pg3.wait_for_timeout(1200)
+            res["no_subresource"] = await pg3.evaluate("""() => ({
+              bg: getComputedStyle(document.body).backgroundColor,
+              grid: getComputedStyle(document.getElementById('calGrid')).display,
+              cols: getComputedStyle(document.getElementById('calGrid')).gridTemplateColumns.split(/\\s+/).filter(Boolean).length,
+              cells: document.querySelectorAll('#calGrid .cell').length,
+              done: document.querySelectorAll('#calGrid .cell--done').length,
+              traces: document.querySelectorAll('#traceList > li').length,
+              delBtns: document.querySelectorAll('.trace__del').length,
+              icons: document.querySelectorAll('svg.lucide').length,
+              overflowX: document.documentElement.scrollWidth - document.documentElement.clientWidth
+            })""")
+            res["blocked_subresources"] = blocked[:10]
+            res["no_subresource_errors"] = e3[:5]
+            await ctx3.close()
+            # D. 公网链接可达 + 内容一致性（防止「本地已改、线上没更新」的假成功）
+            if share_url:
+                res["public_ok"] = http_ok(share_url, 15)
+                res["public_hash_match"] = False
+                for _ in range(3):
+                    try:
+                        with urllib.request.urlopen(share_url, timeout=15) as r:
+                            remote = r.read()
+                        local = open(os.path.join(SITE, "index.html"), "rb").read()
+                        if hashlib.sha256(remote).hexdigest() == hashlib.sha256(local).hexdigest():
+                            res["public_hash_match"] = True
+                            res["public_bytes"] = len(remote)
+                            break
+                    except Exception as e:
+                        res["public_hash_error"] = str(e)[:120]
+                    await asyncio.sleep(2)
+            await b.close()
+            return res
+
+    return asyncio.run(run())
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--add", help="新增痕迹 JSON 数组文件")
+    ap.add_argument("--deploy-only", action="store_true", help="不追加数据，只发版")
+    ap.add_argument("--check", action="store_true", help="只读体检")
+    ap.add_argument("--share-url", default=os.environ.get("GK_SHARE_URL", ""), help="公网分享链接（可选，用于可达性检查）")
+    args = ap.parse_args()
+
+    if args.check:
+        dates, _ = read_existing_dates(os.path.join(SRC, "traces.js"))
+        try:
+            _, st = build_html()
+            single = {"build_bytes": st["total_bytes"],
+                      "inline_scripts": len(st["inline_scripts"]),
+                      "subresource_refs": st["subresource_refs"]}
+        except Exception as e:
+            single = {"error": str(e)[:160]}
+        print(json.dumps({"traces_dates": sorted(dates), "trace_count": len(dates),
+                          "files_differ": files_differ(), "local_service": http_ok(LOCAL_URL),
+                          "single_file": single},
+                         ensure_ascii=False, indent=2))
+        return
+
+    added, changed = ([], False) if args.deploy_only else add_traces(args.add)
+    diff_before = files_differ()
+    need = changed or args.deploy_only or bool(diff_before)
+    report = {"added": added, "files_differ_before": diff_before, "deployed": False}
+
+    if not need:
+        report["reason"] = "无新增痕迹且源文件未变，不发版"
+        print(json.dumps(report, ensure_ascii=False))
+        return
+
+    report["fallback"] = refresh_fallback()
+    report["deploy"] = deploy()
+    report["service"] = ensure_service()
+    try:
+        report["verify"] = verify_online(args.share_url or None)
+    except Exception as e:
+        report["verify"] = {"error": str(e)[:300]}
+    report["deployed"] = True
+    report["files_differ_after"] = files_differ()
+    print(json.dumps(report, ensure_ascii=False))
+
+
+if __name__ == "__main__":
+    main()
