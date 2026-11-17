@@ -34,6 +34,8 @@ import re
 import shutil
 import subprocess
 import sys
+import time
+import urllib.error
 import urllib.request
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -43,8 +45,16 @@ SRC = os.environ.get("GK_SRC", "/workspace/gkzd")
 SITE = os.environ.get("GK_SITE", "/workspace/gkzd-site")
 PUBLISH_JS = "/root/.codebuddy/skills/sites/scripts/publish.js"
 CHROMIUM = "/usr/bin/chromium"
-LOCAL_URL = "http://127.0.0.1:3000/index.html"
+LOCAL_URL = os.environ.get("GK_LOCAL_URL", "http://127.0.0.1:3000/index.html")
 FILES = ["index.html", "styles.css", "app.js", "config.js", "traces.js"]
+
+# GitHub Pages 永久发布目标（仓库即真相源，clone 即恢复）
+GH_REPO = os.environ.get("GK_GH_REPO", "xxoo13149/gkzd")
+GH_PAGES_URL = os.environ.get("GK_GH_PAGES_URL", "https://xxoo13149.github.io/gkzd/")
+GH_TOKEN = os.environ.get("GITHUB_TOKEN", "")
+GH_DIR = os.environ.get("GK_GH_DIR", "/tmp/gkzd-gh")
+# 定时任务跑在临时沙箱：不重新发布 WorkBuddy 链接（会生成新链接，正是旧版每晚"链接更新"的元凶）
+SKIP_PUBLISH = os.environ.get("GK_SKIP_PUBLISH", "") == "1"
 
 # 由 JS 渲染、需要写进静态兜底的容器
 IDS = ["topDate", "calSub", "cdLine", "phaseLine", "streakLine", "calNav", "calGrid", "stats",
@@ -273,6 +283,170 @@ def http_ok(url, timeout=8):
         return False
 
 
+# ---------- GitHub Pages 永久发布（仓库即真相源） ----------
+
+def gh_api(path, method="GET", body=None, tries=4):
+    """api.github.com 带 token 请求；网络抖动时重试。"""
+    last = None
+    for _ in range(tries):
+        try:
+            data = json.dumps(body).encode() if body is not None else None
+            req = urllib.request.Request(
+                "https://api.github.com" + path, data=data,
+                headers={"Authorization": "Bearer " + GH_TOKEN,
+                         "Accept": "application/vnd.github+json",
+                         "User-Agent": "gkzd-sync"}, method=method)
+            with urllib.request.urlopen(req, timeout=20) as r:
+                return r.status, json.loads(r.read().decode("utf-8") or "{}")
+        except urllib.error.HTTPError as e:
+            try:
+                return e.code, json.loads(e.read().decode("utf-8") or "{}")
+            except Exception:
+                return e.code, {}
+        except Exception as e:
+            last = e
+            time.sleep(3)
+    raise RuntimeError("gh_api %s 失败: %s" % (path, str(last)[:120]))
+
+
+def _git(args, cwd=None):
+    """跑 git，返回 (returncode, 脱敏输出)。token 绝不出现在日志里。"""
+    r = subprocess.run(["git"] + args, capture_output=True, text=True, timeout=240, cwd=cwd)
+    out = ((r.stdout or "") + (r.stderr or "")).replace(GH_TOKEN, "***")
+    return r.returncode, out.strip()[-300:]
+
+
+def gh_prepare():
+    """拿到干净的工作副本（clone 或 reset），返回错误信息或 None。"""
+    url = "https://oauth2:" + GH_TOKEN + "@github.com/" + GH_REPO + ".git"
+    if os.path.isdir(os.path.join(GH_DIR, ".git")):
+        if _git(["fetch", "origin", "main"], cwd=GH_DIR)[0] == 0:
+            _git(["reset", "--hard", "origin/main"], cwd=GH_DIR)
+            _git(["clean", "-fdq"], cwd=GH_DIR)
+            return None
+    shutil.rmtree(GH_DIR, ignore_errors=True)
+    out = ""
+    for _ in range(4):
+        rc, out = _git(["clone", "--depth", "1", "-b", "main", url, GH_DIR])
+        if rc == 0:
+            _git(["remote", "set-url", "origin", url], cwd=GH_DIR)
+            # 克隆仓库没有 git 身份，不配置的话 commit 会静默失败（曾造成"假成功"）：
+            _git(["config", "user.name", "gkzd-sync"], cwd=GH_DIR)
+            _git(["config", "user.email", "xxoo13149@users.noreply.github.com"], cwd=GH_DIR)
+            return None
+        shutil.rmtree(GH_DIR, ignore_errors=True)
+        time.sleep(4)
+    return "clone 失败: " + out
+
+
+def gh_mirror_files():
+    """把部署单文件与工程源码镜像进仓库工作副本。"""
+    shutil.copyfile(os.path.join(SITE, "index.html"), os.path.join(GH_DIR, "index.html"))
+    s = os.path.join(GH_DIR, "src")
+    os.makedirs(os.path.join(s, ".lsf"), exist_ok=True)
+    os.makedirs(os.path.join(s, "assets", "vendor"), exist_ok=True)
+    for f in ["app.js", "config.js", "traces.js", "styles.css", "index.html",
+              "build.py", "sync_ima.py", "bootstrap.py", "DESIGN.md"]:
+        src_fp = os.path.join(SRC, f)
+        if os.path.exists(src_fp):
+            shutil.copyfile(src_fp, os.path.join(s, f))
+    tp = os.path.join(SRC, ".lsf", "task-prompt.txt")
+    if os.path.exists(tp):
+        shutil.copyfile(tp, os.path.join(s, ".lsf", "task-prompt.txt"))
+
+
+def fetch_pages_probe(total, span=4096, tries=8):
+    """github.io 传输常被掐断，完整下载不可靠。只抽查首尾各 span 字节（Range）。
+
+    返回 (match, detail)：match=首尾都与本地一致；下载不动则为 (None, "...")。
+    """
+    local = open(os.path.join(SITE, "index.html"), "rb").read()
+    head, tail = local[:span], local[-span:]
+    got = {}
+    for name, rng in (("head", "bytes=0-%d" % (span - 1)),
+                      ("tail", "bytes=%d-%d" % (total - span, total - 1))):
+        for _ in range(tries):
+            try:
+                req = urllib.request.Request(
+                    GH_PAGES_URL, headers={"Range": rng, "User-Agent": "gkzd-sync"})
+                with urllib.request.urlopen(req, timeout=20) as r:
+                    data = r.read()
+                if len(data) == span:
+                    got[name] = data
+                    break
+            except Exception:
+                time.sleep(2)
+        if name not in got:
+            return None, "抽查段 %s 下载失败（CDN 传输受限，不代表部署失败）" % name
+    return got["head"] == head and got["tail"] == tail, "head+tail 抽查"
+
+
+def gh_publish(added):
+    """推送新单文件与源码到 GitHub，等 Pages 构建，回读校验。
+
+    fail-closed：没 token / 推不上去 / 校验不过，都如实写进报告，绝不假装成功。
+    """
+    if not GH_TOKEN:
+        return {"pushed": False, "reason": "no_token",
+                "hint": "GITHUB_TOKEN 未设置（应从 IMA 知识库读取）"}
+    err = gh_prepare()
+    if err:
+        return {"pushed": False, "error": err}
+    gh_mirror_files()
+    _git(["add", "-A"], cwd=GH_DIR)
+    rc, names = _git(["diff", "--cached", "--name-only"], cwd=GH_DIR)
+    if not names:
+        return {"pushed": True, "changed": False, "reason": "nothing_to_commit",
+                "pages_url": GH_PAGES_URL}
+    msg = "sync: " + (",".join(added) if added else "rebuild")
+    rc, sha_old = _git(["rev-parse", "HEAD"], cwd=GH_DIR)
+    rc, out = _git(["commit", "-q", "-m", msg], cwd=GH_DIR)
+    if rc != 0:
+        return {"pushed": False, "error": "commit 失败: " + out}
+    rc, sha_new = _git(["rev-parse", "HEAD"], cwd=GH_DIR)
+    if sha_new.strip() == sha_old.strip():
+        return {"pushed": False, "error": "commit 未产生新提交（HEAD 未变化），拒绝继续"}
+    pushed = False
+    for i in range(3):
+        rc, out = _git(["push", "origin", "HEAD:main"], cwd=GH_DIR)
+        if rc == 0:
+            pushed = True
+            break
+        log("push 第 %d 次失败，重试: %s" % (i + 1, out))
+        time.sleep(4)
+    if not pushed:
+        return {"pushed": False, "error": "push 失败: " + out}
+    rc, sha_new = _git(["rev-parse", "HEAD"], cwd=GH_DIR)
+    sha_new = sha_new.strip()
+    # 校验一：远程 main 的 commit 与本地一致（git 通道可靠，不依赖 CDN）
+    remote_match = False
+    try:
+        code, ref = gh_api("/repos/%s/git/ref/heads/main" % GH_REPO)
+        remote_sha = ((ref.get("object") or {}).get("sha") or "").strip()
+        remote_match = remote_sha == sha_new
+    except Exception as e:
+        log("远程校验查询失败: " + str(e)[:80])
+    # 校验二：等 Pages 把新 commit 构建完（builds API；构建失败或超时如实记录）
+    time.sleep(10)
+    build = "timeout"
+    for _ in range(15):
+        try:
+            code, b = gh_api("/repos/%s/pages/builds/latest" % GH_REPO)
+            if code == 200 and (b.get("commit") or "").startswith(sha_new[:7]) and b.get("status") == "built":
+                build = "built"
+                break
+        except Exception as e:
+            log("build 状态查询失败: " + str(e)[:80])
+        time.sleep(12)
+    # 校验三：Pages 首尾抽查（CDN 传输受限时尽力而为，不单独判死）
+    local = open(os.path.join(SITE, "index.html"), "rb").read()
+    probe, probe_detail = fetch_pages_probe(len(local))
+    return {"pushed": True, "changed": True, "commit": sha_new[:10],
+            "remote_match": remote_match, "build": build,
+            "pages_url": GH_PAGES_URL, "pages_probe": probe,
+            "pages_probe_detail": probe_detail}
+
+
 def ensure_service():
     if http_ok(LOCAL_URL):
         return {"running": True, "action": "none"}
@@ -437,11 +611,19 @@ def main():
 
     report["fallback"] = refresh_fallback()
     report["deploy"] = deploy()
-    report["service"] = ensure_service()
+    if SKIP_PUBLISH:
+        # 临时沙箱：绝不重新发布 WorkBuddy 链接（会生成新链接）；3000 服务不存在属正常
+        report["service"] = {"running": False, "action": "skipped_by_gk_skip_publish"}
+    else:
+        report["service"] = ensure_service()
     try:
         report["verify"] = verify_online(args.share_url or None)
     except Exception as e:
         report["verify"] = {"error": str(e)[:300]}
+    try:
+        report["github"] = gh_publish(added)
+    except Exception as e:
+        report["github"] = {"pushed": False, "error": str(e)[:300]}
     report["deployed"] = True
     report["files_differ_after"] = files_differ()
     print(json.dumps(report, ensure_ascii=False))

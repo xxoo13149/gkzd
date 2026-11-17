@@ -163,3 +163,20 @@
 4. 无新增仍直接结束，不发版。
 
 **剩余如实边界**：若定时任务会话运行在独立 runtime，其 `sync_ima.py` 覆盖的是自己沙箱里的部署目录；公网是否随之更新由 `public_hash_match` 判定，判不出来就报错而非假设成功。要彻底消除这一层，需把任务绑定到持有分享链接的 runtime，或迁到独立静态托管。
+
+## GitHub Pages 永久发布（2026-11-17 迁移，用户选 A）
+
+**问题实锤**：定时任务每次在临时沙箱执行时，`ensure_service()` 发现 3000 服务不在就调 `publish.js` 重新发布 → **每次生成一个新分享链接**（旧版"链接每晚都变"的元凶）；且临时沙箱覆盖的部署目录推不到 WorkBuddy 公网快照，四天（11-13 至 11-16）新增痕迹全部没上去。
+
+**解法：GitHub 仓库即唯一真相源，clone 即恢复（取代网页内嵌恢复包的自举）。**
+
+- 仓库 `xxoo13149/gkzd`（公开）：根目录 `index.html` = 部署单文件（GitHub Pages 从 main 根目录发布）；`src/` = 完整工程镜像。永久地址：**https://xxoo13149.github.io/gkzd/**（不再变更，任何汇报不得出现自生成的链接）。
+- `sync_ima.py` 新增 `gh_publish()`：镜像单文件与源码进 `/tmp/gkzd-gh` 工作副本 → commit → push（重试 3 次）→ `gh_api` 等 `pages/builds/latest` 变 `built` 且 commit 匹配 → Pages 首尾 Range 抽查（尽力而为）。
+- 校验口径（沙箱实测：github.com git 通道稳定，github.io / raw CDN 传输常被掐断，完整下载不可靠）：
+  1. `github.remote_match=true`——远程 `main` 的 sha 与本地构建 commit 一致（git 通道校验，可靠）；
+  2. `github.build=built`——Pages 已构建该 commit（API 校验，可靠）；
+  3. `github.pages_probe`——首尾 4KB 抽查，`null` 属 CDN 传输受限，如实汇报不算失败。
+- **`GK_SKIP_PUBLISH=1`**（定时会话硬规则）：跳过 `ensure_service()`，绝不重新发布 WorkBuddy 分享链接；本地验证改用 `GK_LOCAL_URL=file:///workspace/gkzd-site/index.html`。
+- 定时任务 token：fine-grained PAT（只授权 gkzd 仓库、Contents RW），由用户存于 IMA 知识库文档「GitHub 同步令牌」，任务每晚会话读取后 `export GITHUB_TOKEN`；取不到如实报错终止。token 绝不写入仓库、网页、恢复包或汇报消息。
+- WorkBuddy 旧链接（`aea6f47a0565841ad...`）降级为备用入口，只由用户主会话手动维护；定时任务任何情况下不碰它。
+- 如实边界：GitHub Pages 在中国大陆直连可能时快时慢甚至打不开，用户已知情并将亲自实测；若不可用，备用入口仍是 WorkBuddy 链接。
