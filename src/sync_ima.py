@@ -317,8 +317,29 @@ def _git(args, cwd=None):
 
 
 def gh_prepare():
-    """拿到干净的工作副本（clone 或 reset），返回错误信息或 None。"""
+    """拿到干净的工作副本（clone 或 reset），返回错误信息或 None。
+    定时任务场景：SRC 就是 GH_DIR/src（工作克隆自身）。此时严禁在发版中途
+    fetch/reset/clean——那会抹掉本会话刚通过 --add 写入的痕迹与兜底刷新，
+    然后提交出「无变化」的假成功。同步远程状态是任务流程步骤 0c 的职责。"""
     url = "https://oauth2:" + GH_TOKEN + "@github.com/" + GH_REPO + ".git"
+    if os.path.realpath(SRC) == os.path.realpath(os.path.join(GH_DIR, "src")):
+        if os.path.isdir(os.path.join(GH_DIR, ".git")):
+            _git(["config", "user.name", "gkzd-sync"], cwd=GH_DIR)
+            _git(["config", "user.email", "xxoo13149@users.noreply.github.com"], cwd=GH_DIR)
+            log("工作克隆模式（SRC=GH_DIR/src）：跳过 fetch/reset，保持本会话产物")
+            return None
+        shutil.rmtree(GH_DIR, ignore_errors=True)
+        out = ""
+        for _ in range(4):
+            rc, out = _git(["clone", "--depth", "1", "-b", "main", url, GH_DIR])
+            if rc == 0:
+                _git(["remote", "set-url", "origin", url], cwd=GH_DIR)
+                _git(["config", "user.name", "gkzd-sync"], cwd=GH_DIR)
+                _git(["config", "user.email", "xxoo13149@users.noreply.github.com"], cwd=GH_DIR)
+                return None
+            shutil.rmtree(GH_DIR, ignore_errors=True)
+            time.sleep(4)
+        return "clone 失败: " + out
     if os.path.isdir(os.path.join(GH_DIR, ".git")):
         if _git(["fetch", "origin", "main"], cwd=GH_DIR)[0] == 0:
             _git(["reset", "--hard", "origin/main"], cwd=GH_DIR)
@@ -340,7 +361,8 @@ def gh_prepare():
 
 
 def gh_mirror_files():
-    """把部署单文件与工程源码镜像进仓库工作副本。"""
+    """把部署单文件与工程源码镜像进仓库工作副本。
+    定时任务场景下 SRC 就是 GH_DIR/src（工作克隆自身），逐文件判重，绝不自己复制自己。"""
     shutil.copyfile(os.path.join(SITE, "index.html"), os.path.join(GH_DIR, "index.html"))
     s = os.path.join(GH_DIR, "src")
     os.makedirs(os.path.join(s, ".lsf"), exist_ok=True)
@@ -348,11 +370,13 @@ def gh_mirror_files():
     for f in ["app.js", "config.js", "traces.js", "styles.css", "index.html",
               "build.py", "sync_ima.py", "bootstrap.py", "DESIGN.md"]:
         src_fp = os.path.join(SRC, f)
-        if os.path.exists(src_fp):
-            shutil.copyfile(src_fp, os.path.join(s, f))
+        dst_fp = os.path.join(s, f)
+        if os.path.exists(src_fp) and os.path.realpath(src_fp) != os.path.realpath(dst_fp):
+            shutil.copyfile(src_fp, dst_fp)
     tp = os.path.join(SRC, ".lsf", "task-prompt.txt")
-    if os.path.exists(tp):
-        shutil.copyfile(tp, os.path.join(s, ".lsf", "task-prompt.txt"))
+    tp_dst = os.path.join(s, ".lsf", "task-prompt.txt")
+    if os.path.exists(tp) and os.path.realpath(tp) != os.path.realpath(tp_dst):
+        shutil.copyfile(tp, tp_dst)
 
 
 def fetch_pages_probe(total, span=4096, tries=8):
