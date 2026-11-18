@@ -218,10 +218,15 @@ p,blockquote,.axis__desc,.trace__body{text-wrap:pretty}
 /* ---------- 痕迹 ---------- */
 .traces{padding:46px 0 58px}
 .toolbar{display:flex;align-items:center;justify-content:space-between;gap:18px;margin-bottom:22px;flex-wrap:wrap}
+.chip-legend{font-size:11px;color:var(--muted);margin-bottom:12px}
+.chip-legend__topic{color:var(--green);font-weight:600}
 .chips{display:flex;gap:6px;flex-wrap:wrap}
 .chip{font-size:11px;padding:6px 11px;border:1px solid var(--line-strong);border-radius:var(--r);color:var(--ink-2);transition:background .2s,color .2s,border-color .2s}
 .chip:hover{border-color:var(--ink);color:var(--ink)}
 .chip.is-active{background:var(--green);border-color:var(--green);color:var(--surface)}
+/* 训练类型标签用朱红描边区分于板块标签；选中时朱红实心 */
+.chip--kind{border-style:dashed}
+.chip--kind.is-active{background:var(--red);border-color:var(--red);border-style:solid;color:var(--surface)}
 .search{display:flex;align-items:center;gap:8px;border-bottom:1px solid var(--ink);padding:5px 2px;min-width:220px;flex:0 1 260px}
 .search input{border:0;background:none;outline:0;width:100%;font-size:12.5px}
 .search input::placeholder{color:var(--muted)}
@@ -239,6 +244,7 @@ p,blockquote,.axis__desc,.trace__body{text-wrap:pretty}
 @keyframes fresh{from{opacity:0;transform:translateY(-8px);box-shadow:0 0 0 3px rgba(192,57,43,.22)}to{opacity:1;transform:none;box-shadow:none}}
 .trace__top{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:8px}
 .trace__type{font-size:10px;letter-spacing:.06em;background:var(--green);color:var(--surface);padding:3px 7px;border-radius:var(--r)}
+.trace__kind{font-size:10px;letter-spacing:.04em;color:var(--red);border:1px solid rgba(192,57,43,.45);border-radius:var(--r);padding:2px 6px}
 .trace__by{font-size:10px;color:var(--muted);border:1px solid var(--line);padding:2px 6px;border-radius:var(--r)}
 .trace__by--ai{color:var(--red);border-color:rgba(192,57,43,.45)}
 .trace__nums{font-family:var(--mono);font-size:10px;color:var(--muted);margin-left:auto}

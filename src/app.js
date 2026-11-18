@@ -71,6 +71,16 @@ function examCfg(){
 let EX = examCfg();
 
 /* ---------- 痕迹 ---------- */
+/* 旧数据只有 type 没有 topic/kind：映射成板块+训练类型，保证筛选/标签不空 */
+const LEGACY_TOPIC = {'刷题':'全卷综合','听课':'全卷综合','模考':'全卷综合','复盘':'全卷综合',
+  '工具落地':'全卷综合','用工具':'全卷综合','装工具':'全卷综合','定标':'全卷综合','随手记':'全卷综合'};
+function traceTopic(t){
+  if (t.topic) return t.topic;
+  return LEGACY_TOPIC[t.type] || '全卷综合';
+}
+function traceKind(t){
+  return t.kind || t.type || '随手记';
+}
 function allTraces(){
   const mine = store.get('traces', []);
   const gone = store.get('deletedTraces', []);
@@ -335,7 +345,7 @@ function renderTasks(){
       let mine = store.get('traces', []);
       if (isFull){
         if (!mine.some(t => t.id === autoId)) mine.push({
-          id: autoId, date: todayKey(), type: '随手记', title: '今日四件事全部划掉',
+          id: autoId, date: todayKey(), topic: '全卷综合', kind: '随手记', type: '随手记', title: '今日四件事全部划掉',
           body: '资料分析、数量关系、错题复盘、一页纸，四件都做完了。',
           note: '划掉比记住更重要', questions: null, minutes: null, score: null,
           src: '作战台 · 今日清单自动留痕', by: 'me'
@@ -401,19 +411,35 @@ function renderAxis(){
 /* ---------- 学习痕迹 ---------- */
 let filter = '全部', keyword = '', freshId = null, pendingDel = null;
 let undoDel = null;
+function matchFilter(t){
+  if (filter === '全部') return true;
+  if (filter.indexOf('topic:') === 0) return traceTopic(t) === filter.slice(6);
+  if (filter.indexOf('kind:') === 0) return traceKind(t) === filter.slice(5);
+  /* 兼容旧的单值筛选（外部若直接设了旧 type） */
+  return traceKind(t) === filter || traceTopic(t) === filter;
+}
 function renderFilters(){
-  const types = ['全部'].concat(Array.from(new Set(allTraces().map(t => t.type).filter(Boolean))));
-  if (types.indexOf(filter) < 0) filter = '全部';
-  $('#traceFilters').innerHTML = types.map(t =>
-    '<button class="chip' + (t === filter ? ' is-active' : '') + '" type="button" data-type="' + esc(t) + '">' + segStr(t) + '</button>').join('');
-  $$('[data-type]').forEach(b => b.addEventListener('click', () => { filter = b.dataset.type; pendingDel = null; renderFilters(); renderTraces(); }));
+  const topics = (C.taxonomy && C.taxonomy.topics) || [];
+  const kinds = (C.taxonomy && C.taxonomy.kinds) || [];
+  const useTopics = Array.from(new Set(allTraces().map(traceTopic).filter(Boolean)));
+  const useKinds = Array.from(new Set(allTraces().map(traceKind).filter(Boolean)));
+  const topicList = topics.filter(x => useTopics.indexOf(x) >= 0).concat(useTopics.filter(x => topics.indexOf(x) < 0));
+  const kindList = kinds.filter(x => useKinds.indexOf(x) >= 0).concat(useKinds.filter(x => kinds.indexOf(x) < 0));
+  const chips = ['全部']
+    .concat(topicList.map(x => 'topic:' + x))
+    .concat(kindList.map(x => 'kind:' + x));
+  if (chips.indexOf(filter) < 0) filter = '全部';
+  const label = f => f === '全部' ? '全部' : f.slice(f.indexOf(':') + 1);
+  const dim = f => f.indexOf('topic:') === 0 ? 'topic' : f.indexOf('kind:') === 0 ? 'kind' : '';
+  $('#traceFilters').innerHTML = chips.map(f =>
+    '<button class="chip' + (f === filter ? ' is-active' : '') + (dim(f) ? ' chip--' + dim(f) : '') + '" type="button" data-filter="' + esc(f) + '" data-dim="' + dim(f) + '">' + segStr(label(f)) + '</button>').join('');
+  $$('[data-filter]').forEach(b => b.addEventListener('click', () => { filter = b.dataset.filter; pendingDel = null; renderFilters(); renderTraces(); }));
 }
 function renderTraces(){
-  let list = allTraces();
-  if (filter !== '全部') list = list.filter(t => t.type === filter);
+  let list = allTraces().filter(matchFilter);
   if (keyword.trim()){
     const k = keyword.trim().toLowerCase();
-    list = list.filter(t => [t.title,t.body,t.note,t.src,t.type,t.date].join(' ').toLowerCase().indexOf(k) >= 0);
+    list = list.filter(t => [t.title,t.body,t.note,t.src,traceTopic(t),traceKind(t),t.date].join(' ').toLowerCase().indexOf(k) >= 0);
   }
   $('#traceEmpty').hidden = list.length > 0;
   $('#traceList').innerHTML = list.map(t => {
@@ -423,7 +449,8 @@ function renderTraces(){
     return '<li class="trace"><div class="trace__when"><div class="trace__date">' + md(d) + '</div>' +
       '<div class="trace__week">' + d.getFullYear() + ' / 周' + WEEK[d.getDay()] + '</div></div>' +
       '<article class="trace__card' + (t.id === freshId ? ' is-fresh' : '') + (pendingDel === t.id ? ' is-deleting' : '') + '">' +
-        '<div class="trace__top"><span class="trace__type">' + segStr(t.type || '随手记') + '</span>' +
+        '<div class="trace__top"><span class="trace__type">' + segStr(traceTopic(t)) + '</span>' +
+          '<span class="trace__kind">' + segStr(traceKind(t)) + '</span>' +
           '<span class="trace__by' + (t.by === 'ai' ? ' trace__by--ai' : '') + '">' + segStr(by) + '</span>' +
           (nums ? '<span class="trace__nums">' + segStr(nums) + '</span>' : '<span class="trace__nums" aria-hidden="true"></span>') +
           '<button class="trace__del" type="button" data-del="' + esc(t.id) + '" aria-label="删除这道痕迹"><i data-lucide="trash-2"></i></button></div>' +
@@ -489,7 +516,7 @@ function exportTraces(){
   const list = allTraces();
   const lines = ['# 公考作战台 · 学习痕迹', '', '导出日期：' + full(now()), '考试：' + EX.name + ' · ' + full(EX.date), '共 ' + list.length + ' 条', ''];
   list.forEach(t => {
-    lines.push('## ' + t.date + ' · ' + (t.type || '随手记') + ' · ' + t.title, '');
+    lines.push('## ' + t.date + ' · ' + traceTopic(t) + ' · ' + traceKind(t) + ' · ' + t.title, '');
     if (t.body) lines.push(t.body, '');
     if (t.note) lines.push('> 红笔批注：' + t.note, '');
     const meta = [t.questions ? '题量 ' + t.questions : '', t.minutes ? '用时 ' + t.minutes + ' 分钟' : '', typeof t.score === 'number' ? '分数 ' + t.score : '', t.src ? '出处 ' + t.src : ''].filter(Boolean);
@@ -559,8 +586,10 @@ function openRefs(trigger){
 /* ---------- 表单 ---------- */
 let openAdd = function(){};
 function initForms(){
-  const types = ['刷题','复盘','模考','听课','装工具','用工具','工具落地','随手记','定标'];
-  $('#fType').innerHTML = types.map(t => '<option>' + t + '</option>').join('');
+  const topics = (C.taxonomy && C.taxonomy.topics) || ['全卷综合'];
+  const kinds = (C.taxonomy && C.taxonomy.kinds) || ['随手记'];
+  $('#fType').innerHTML = topics.map(t => '<option>' + t + '</option>').join('');
+  $('#fKind').innerHTML = kinds.map(t => '<option>' + t + '</option>').join('');
   openAdd = (trigger, date) => {
     $('#traceForm').reset(); $('#fDate').value = date || todayKey();
     openLayer($('#traceModal'), trigger);
@@ -571,8 +600,9 @@ function initForms(){
   $('#traceForm').addEventListener('submit', e => {
     e.preventDefault();
     const num = id => { const v = $(id).value.trim(); return v === '' ? null : Number(v); };
+    const tp = $('#fType').value, kd = $('#fKind').value;
     const rec = {
-      id: 'me-' + Date.now(), date: $('#fDate').value || todayKey(), type: $('#fType').value,
+      id: 'me-' + Date.now(), date: $('#fDate').value || todayKey(), topic: tp, kind: kd, type: kd,
       title: $('#fTitle').value.trim(), body: $('#fBody').value.trim(), note: $('#fNote').value.trim() || null,
       questions: num('#fQuestions'), minutes: num('#fMinutes'), score: num('#fScore'),
       src: '自己在作战台记的', by: 'me'

@@ -19,9 +19,11 @@ sync_ima.py — 公考作战台 IMA 学习痕迹同步（本地机械流程固�
   python3 sync_ima.py --check                      # 只读体检，不改动任何文件
 
 JSON 输入格式（数组，字段缺失一律按 null 处理，不做默认值兜底）：
-  [{"id":"ima-2026-11-12","date":"2026-11-12","type":"刷题",
+  [{"id":"ima-2026-11-12","date":"2026-11-12","topic":"资料分析","kind":"限时真题","type":"限时真题",
     "title":"...","body":"...","note":"...","minutes":null,
     "questions":null,"score":null,"src":"学习痕迹 2026-11-12","by":"ima"}]
+  topic=板块（资料分析/数量关系/言语理解/…），kind=训练类型（限时真题/套卷/专项练习/…）；
+  两者均取自知识库原文语境，源站没有明确归类时留 null，不臆造。
 
 约定见 /workspace/gkzd/DESIGN.md「后续改动约定」。
 """
@@ -62,7 +64,7 @@ IDS = ["topDate", "calSub", "cdLine", "phaseLine", "streakLine", "calNav", "calG
        "nextLabel", "nextDesc", "nextDate", "nextLeft", "scoreNow", "scoreTarget", "scoreGap",
        "milestoneList", "traceFilters", "traceList", "fType", "examPresets"]
 
-FIELDS = ["id", "date", "type", "title", "body", "note", "minutes", "questions", "score", "src", "by"]
+FIELDS = ["id", "date", "topic", "kind", "type", "title", "body", "note", "minutes", "questions", "score", "src", "by"]
 
 
 def log(msg):
@@ -85,7 +87,7 @@ def to_js_obj(t):
     g = lambda k: js_val(t.get(k))
     return (
         "  {\n"
-        f"    id: {g('id')}, date: {g('date')}, type: {g('type')},\n"
+        f"    id: {g('id')}, date: {g('date')}, topic: {g('topic')}, kind: {g('kind')}, type: {g('type')},\n"
         f"    title: {g('title')},\n"
         f"    body: {g('body')},\n"
         f"    note: {g('note')},\n"
