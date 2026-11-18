@@ -57,8 +57,8 @@ function examCfg(){
   /* 非法日期（含旧版缓存里的怪值）一律回退默认，避免 NaN 让格历整个空掉 */
   if (isNaN(date.getTime())) date = parseDT(b.date);
   if (isNaN(start.getTime())) start = parseDT(b.start + 'T00:00:00');
-  if (isNaN(date.getTime())) date = new Date(2026, 11, 6, 9, 0, 0);
-  if (isNaN(start.getTime())) start = new Date(2026, 9, 27, 0, 0, 0);
+  if (isNaN(date.getTime())) date = new Date(2027, 10, 28, 9, 0, 0);
+  if (isNaN(start.getTime())) start = new Date(2026, 10, 2, 0, 0, 0);
   /* 开卷日不能晚于考试日，否则格历会退化成 0 格 */
   if (start > date) start = new Date(date.getFullYear(), date.getMonth(), date.getDate());
   return {
@@ -284,18 +284,30 @@ function renderStats(){
   icons();
 }
 
-/* ---------- 打气语 ---------- */
-let qi = 0;
+/* ---------- 打气语：洗牌袋，一轮走完不重复，刷新换起点 ---------- */
+let qi = -1, quoteBag = [];
+function reshuffleQuote(){
+  quoteBag = C.quotes.map((_, i) => i);
+  for (let i = quoteBag.length - 1; i > 0; i--){
+    const j = Math.floor(Math.random() * (i + 1));
+    const t = quoteBag[i]; quoteBag[i] = quoteBag[j]; quoteBag[j] = t;
+  }
+  /* 避免新一轮首句和上一句相同 */
+  if (quoteBag.length > 1 && quoteBag[quoteBag.length - 1] === qi){
+    const t = quoteBag[0]; quoteBag[0] = quoteBag[quoteBag.length - 1]; quoteBag[quoteBag.length - 1] = t;
+  }
+}
+function nextQuote(){
+  if (!quoteBag.length) reshuffleQuote();
+  qi = quoteBag.pop();
+  setQuote(qi);
+}
 function setQuote(i){
-  const q = C.quotes[i % C.quotes.length], el = $('#quoteText');
+  const q = C.quotes[i], el = $('#quoteText');
   el.classList.add('is-swap');
   setTimeout(() => { el.innerHTML = segStr(q.text); $('#quoteSrc').textContent = '— ' + q.src; el.classList.remove('is-swap'); }, 200);
 }
-function initQuote(){
-  const n = Math.floor(now().getTime() / 86400000);
-  qi = ((n % C.quotes.length) + C.quotes.length) % C.quotes.length;
-  setQuote(qi);
-}
+function initQuote(){ reshuffleQuote(); nextQuote(); }
 
 /* ---------- 今日任务 ---------- */
 function renderTasks(){
@@ -601,7 +613,7 @@ function initForms(){
 
 /* ---------- 全局 ---------- */
 function initGlobal(){
-  $('#quoteBtn').addEventListener('click', () => { qi = (qi + 1 + Math.floor(Math.random()*3)) % C.quotes.length; setQuote(qi); });
+  $('#quoteBtn').addEventListener('click', nextQuote);
   $('#refBtn').addEventListener('click', e => openRefs(e.currentTarget));
   $('#drawerClose').addEventListener('click', () => closeLayer($('#drawer')));
   $('#exportBtn').addEventListener('click', exportTraces);
