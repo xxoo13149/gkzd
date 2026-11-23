@@ -113,17 +113,22 @@ def add_traces(json_path):
     if not isinstance(raw, list):
         raise ValueError("--add 必须是 JSON 数组")
     path = os.path.join(SRC, "traces.js")
-    existing, text = read_existing_dates(path)
+    existing_dates, text = read_existing_dates(path)
+    # 同日多条：按 id 去重（id 唯一），date 只做合法性校验，不再做唯一键。
+    # 这样同一天可以有多条不同 id 的痕迹；重复触发仍因 id 已存在被跳过。
+    existing_ids = set(re.findall(r"id:\s*'([^']+)'", text[text.index("window.GK_TRACES = ["):] if "window.GK_TRACES = [" in text else text))
     fresh = []
     for t in raw:
         d = t.get("date")
         if not d or not re.fullmatch(r"\d{4}-\d{2}-\d{2}", str(d)):
             log(f"跳过无效 date: {d!r}")
             continue
-        if d in existing:
-            log(f"已存在，跳过: {d}")
+        tid = t.get("id") or f"ima-{d}"
+        if tid in existing_ids:
+            log(f"已存在（id 去重），跳过: {tid}")
             continue
-        existing.add(d)
+        existing_ids.add(tid)
+        existing_dates.add(d)
         fresh.append(t)
     if not fresh:
         return [], False
