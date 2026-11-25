@@ -12,10 +12,11 @@
       ★ GK_SKIP_PUBLISH=1 是硬规则：定时会话绝不重新发布 WorkBuddy 分享链接（旧版每次重发布都会生成一个新链接，这是已修复的 bug）。
    e. 自检：python3 /tmp/gkzd-gh/src/sync_ima.py --check，输出里 trace_count 应为正数。报错 → 如实终止。
 
-1. 用上一步已取到的 IMA 文档列表（步骤 0a 的调用结果可直接复用，不必重复调用），筛出标题匹配「学习痕迹 YYYY-MM-DD」的文档。读取 /tmp/gkzd-gh/src/traces.js，收集 window.GK_TRACES 数组里已有的 date 集合，比对得出「尚未同步」的文档。若没有新增，直接汇报「无新增，未发版」并结束，不要调用脚本、不要 push。
+1. 用上一步已取到的 IMA 文档列表（步骤 0a 的调用结果可直接复用，不必重复调用），筛出标题匹配「学习痕迹 YYYY-MM-DD」的文档。读取 /tmp/gkzd-gh/src/traces.js，收集 window.GK_TRACES 数组里已有的 id 集合（同一天可能已有多条，id 形如 ima-<date> 或 ima-<date>-<短语>）。对每篇候选文档，先按步骤 2 的 id 规则算出它的 id：若该 id 已存在则跳过该篇，若不存在则为新增。同一天允许多条不同 id 的痕迹，一律按 id 判断新增，不再按 date 判断。若所有候选文档的 id 都已存在，直接汇报「无新增，未发版」并结束，不要调用脚本、不要 push。
 
 2. 对每篇新增文档调 mcp__ima__fetch_media_content 取全文，按 DESIGN.md 的 IMA 同步映射转成痕迹对象：
-   - id = 'ima-<date>'，date = 'YYYY-MM-DD'，by = 'ima'，src = '学习痕迹 <date>'
+   - id：同一天只有一篇文档时用 ima-<date>；同一天有多篇时用 ima-<date>-<短语>，<短语> 取该文档标题中「·」后的第一段原文（去掉标点符号与空格，保留中文和数字），例如「资料精讲8间隔乘积年均」「软件刷精练7十八题」。id 必须稳定可复现：只由标题决定，不依赖文档列表顺序；同一篇文档每次运行必须算出同一个 id，这是重复触发不重复追加的关键。若同一天两篇算出的短语相同，再追加标题中下一处可区分的短语。
+   - date = 'YYYY-MM-DD'，by = 'ima'，src = '学习痕迹 <date>'
    - title 取标题中「·」后的短语（可读即可，不新写标语）
    - body 取「今日终点」段原文；没有该节则取「今日性质」段
    - note 取「下一步」里给明天的一句话（或「一条纪律提醒」里的短句），均为原文，不自己编写
@@ -29,7 +30,7 @@
 3. 把这些对象写成 JSON 数组存到 /tmp/gkzd_new_traces.json（JSON 里字符串用双引号，null 用 null）。
 
 4. 执行：python3 /tmp/gkzd-gh/src/sync_ima.py --add /tmp/gkzd_new_traces.json
-   脚本会自动完成：按 date 去重追加 traces.js → 真实浏览器刷新静态兜底 → build.py 打包零子资源单文件 → 本地三态验证（JS 开/关/零子资源）→ git push 到 GitHub → 等 Pages 构建 → 分块回读 Pages 比对 sha256。不要自己手工改这些文件。
+   脚本会自动完成：按 id 去重追加 traces.js（id 已存在则跳过）→ 真实浏览器刷新静态兜底 → build.py 打包零子资源单文件 → 本地三态验证（JS 开/关/零子资源）→ git push 到 GitHub → 等 Pages 构建 → 分块回读 Pages 比对 sha256。不要自己手工改这些文件。
 
 5. 读取脚本输出的 JSON 报告，确认全部成立才算成功：
    deployed=true；github.pushed=true；github.changed=false 时视为无实质变化（同样算成功）；
@@ -37,10 +38,10 @@
    github.pages_probe 为 true 最好；为 null 属于 CDN 传输受限，如实汇报即可（不算失败）。
    任一项不成立或脚本报 error → 如实汇报「未确认上线」，列出失败项原文，不要声称成功、不要手工改部署文件、不要另想办法伪造发版。
 
-6. 汇报：本次新增了哪几条（date + title）、永久地址 https://xxoo13149.github.io/gkzd/ 的校验结果（pages_hash_match）；无新增则说明未发版。
+6. 汇报：本次新增了哪几条（date + title + id）、永久地址 https://xxoo13149.github.io/gkzd/ 的校验结果（pages_hash_match）；无新增则说明未发版。
 
 补充约束：
-- 只增不删，不改动已有的历史痕迹对象；脚本按 date 去重，重复触发不会重复追加。
+- 只增不删，不改动已有的历史痕迹对象；按 id 去重，同一天可有多条，重复触发不会重复追加。
 - 不改 config.js 里的考试日、里程碑等配置。
 - 不加载 automation-task-manager skill（调度会话自身不该管理任务）。
 - 不碰 WorkBuddy 旧链接（https://aea6f47a0565841ad.app.workbuddy.host/...），它只由用户主会话手动维护；任何情况下都不调用发布/republish。
