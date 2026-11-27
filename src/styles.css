@@ -299,6 +299,7 @@ p,blockquote,.axis__desc,.trace__body{text-wrap:pretty}
   min-height:40px;padding:6px 9px;background:var(--surface);text-align:left;white-space:nowrap;transition:background .2s}
 .cyc__d{font-family:var(--mono);font-size:11px;line-height:1.2;font-weight:400;color:var(--muted)}
 .cyc__c{font-size:12px;line-height:1.35;color:var(--ink);min-width:0;overflow:hidden;text-overflow:ellipsis}
+.cyc__short{display:none}
 .cyc__day.is-future::after{inset:2px}
 .cyc__day.is-future::after{content:"";position:absolute;inset:3px;border:1px dashed var(--line-strong);pointer-events:none}
 .cyc__day.is-done{background:var(--green)}
@@ -480,8 +481,8 @@ section[id]{scroll-margin-top:66px}
   .cyc__wk em{display:none}
   .cyc__day{min-height:46px;padding:4px 3px;align-items:center;gap:2px}
   .cyc__d{font-size:9.5px}
-  .cyc__c{font-size:0}
-  .cyc__c::after{content:attr(data-s);font-size:11px;line-height:1.35}
+  .cyc__c .cyc__full{display:none}
+  .cyc__c .cyc__short{display:inline;font-size:11px;line-height:1.35}
   .cyc__c .cyc__x{display:none}
   .cyc__tick{right:2px;top:4px}
   .cyc-panel__head{align-items:flex-start}

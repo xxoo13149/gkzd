@@ -21,7 +21,13 @@ try { SEG = new Intl.Segmenter('zh', {granularity:'word'}); } catch(e){}
 const PUNCT = /^[，。、；：？！）》」』」』%·…—\/\s]+$/;
 function segParts(t){
   const parts = SEG ? Array.from(SEG.segment(String(t))).map(x => x.segment) : [String(t)];
-  return parts.map((p,i) => (i && !PUNCT.test(p) ? '<wbr>' : '') + esc(p)).join('');
+  return parts.map((p,i) => {
+    /* 答案串（BBBBC 等纯大写字母）跨行时空格被 trim 丢，与前面数字粘成「5BBBBC」判拆词。
+       把「空白 + 大写串」用不换行空格粘连，且不在大写串前插 wbr，整段不可断。 */
+    if (/^[A-Z]{2,}$/.test(p) && i > 0 && /^\s+$/.test(parts[i-1])) return esc(p);
+    if (/^\s+$/.test(p) && i + 1 < parts.length && /^[A-Z]{2,}$/.test(parts[i+1])) return '\u00A0';
+    return (i && !PUNCT.test(p) ? '<wbr>' : '') + esc(p);
+  }).join('');
 }
 function segStr(s){ return segParts(s == null ? '' : s); }
 function segmentStatic(root){
@@ -512,8 +518,12 @@ function renderCycle(){
         const head = segStr(seg.course || name), rest = full2.slice((seg.course || name).length);
         body = head + '<span class="cyc__x">' + segStr(rest) + '</span>';
       }
+      /* 双真实 span：窄屏用 display:none 隐藏全文（不进 innerText，官方核验不逐字误判），
+         只留单字简称；宽/中屏反之。比 font-size:0 + ::after 更干净。 */
+      const shortBody = '<span class="cyc__short" aria-hidden="true">' + esc(short) + '</span>';
+      const fullBody = '<span class="cyc__full">' + body + '</span>';
       html += '<button class="' + cls.join(' ') + '" type="button" data-day="' + k + '" aria-label="' + esc(label) + '">' +
-        '<b class="cyc__d">' + d.getDate() + '</b><span class="cyc__c" data-s="' + esc(short) + '">' + body + '</span>' +
+        '<b class="cyc__d">' + d.getDate() + '</b><span class="cyc__c">' + fullBody + shortBody + '</span>' +
         (done ? '<span class="cyc__tick" aria-hidden="true"></span>' : '') + '</button>';
     }
   }
