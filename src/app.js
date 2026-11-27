@@ -319,87 +319,328 @@ function setQuote(i){
 }
 function initQuote(){ reshuffleQuote(); nextQuote(); }
 
-/* ---------- 今日任务 ---------- */
+/* ---------- 今日清单（规划 v6：按当天在周期里的位置生成，三档可切） ----------
+   周节奏模板为原文；「隔天半组练」按周期第几天的奇偶取、「第 1 周不排软件练」
+   （第 1 周 1.2–1.5h ＝ 中午数量＋晚上 1 讲＋睡前，容不下练）这两条是落地时的推断。 */
+let tier = 'normal';
+function curTier(){
+  const t = store.get('tier:' + todayKey(), null);
+  return CY.tiers.some(x => x.id === t) ? t : 'normal';
+}
+function planFor(key){
+  const P = CY.weekPlan, d = parseDT(key + 'T00:00:00'), dow = d.getDay(), pos = cyclePos(d);
+  const mk = (id, o, text) => ({ id: id, text: text || o.text, min: o.min });
+  const out = { tasks: [], empty: false };
+  const exam = CY.exams.find(e => e.date === key);
+  if (exam) return Object.assign(out, { tasks: P.exam.map((o, i) => mk('exam' + i, o)) });
+  if (!pos.inCycle) return Object.assign(out, { empty: true });
+  if (tier === 'low') return Object.assign(out, { tasks: P.low.map((o, i) => mk('low' + i, o)) });
+  const seg = CY.lectures.find(s => key >= s.from && key <= s.to) || {};
+  const extra = CY.extra.filter(e => e.date === key).map(e => e.course);
+  const tasks = [], sat = dow === 6, sun = dow === 0, wk = pos.week, good = tier === 'good';
+  const lecture = n => mk('lecture', {min: P.lecture.min * n}, P.lecture.text.replace('{n}', n).replace('{course}', seg.course));
+  if (seg.kind === 'final'){
+    /* 期末块：中午数量照旧；晚上 20 分钟软件练；每周 3 讲（申论 1 + 科学推理 2）按周一/周五科学、周三申论摊开 */
+    tasks.push(mk('noon', P.noon), mk('keep', P.keep));
+    if (dow === 3) extra.push('申论');
+    else if (dow === 1 || dow === 5) extra.push('科学推理');
+  } else if (seg.kind === 'buffer'){
+    tasks.push(mk('main', P.buffer));
+  } else if (seg.kind === 'wrap'){
+    tasks.push(mk('a', P.wrapA), mk('b', P.wrapB));
+  } else {
+    const dbl = !!seg.weekendDouble && (sat || sun);
+    if (!sat || good) tasks.push(mk('noon', P.noon));
+    if (sat){
+      tasks.push(lecture(2), mk('review', P.review));
+      if (wk >= 2) tasks.push(mk('drill', P.drillFull));
+    } else if (sun){
+      tasks.push(lecture(dbl ? 2 : 1), mk('makeup', P.makeup));
+    } else {
+      tasks.push(lecture(good ? 2 : 1));
+      if (wk >= 2 && (good || pos.idx % 2 === 0)) tasks.push(mk('drill', good ? P.drillFull : P.drillHalf));
+    }
+    if (!sat || good) tasks.push(mk('night', P.night));
+    if (dow === 3) extra.push('申论');
+    if (dow === 5 && seg.course !== '科学推理') extra.push('科学推理');
+  }
+  extra.forEach((c, i) => tasks.push({ id: 'extra' + i, text: c + ' 1 讲', min: 55 }));
+  return Object.assign(out, { tasks: tasks });
+}
 function renderTasks(){
-  const key = 'tasks:' + todayKey(), done = store.get(key, []), list = C.dailyTasks;
-  $('#taskRing').textContent = done.length + ' / ' + list.length;
-  $('#taskList').innerHTML = list.map(t =>
-    '<li><button class="task' + (done.indexOf(t.id) >= 0 ? ' is-done' : '') + '" type="button" data-task="' + t.id + '" aria-pressed="' + (done.indexOf(t.id) >= 0) + '">' +
-      '<span class="task__box"></span><span class="task__txt">' + segStr(t.text) + '</span><span class="task__min">' + t.min + ' MIN</span></button></li>').join('');
+  const key = todayKey(), d = now(), pos = cyclePos(d), plan = planFor(key), list = plan.tasks;
+  tier = curTier();
+  const tkey = 'tasks:' + key;
+  const done = store.get(tkey, []), marks = Array.isArray(done) ? done : [];
+  const goal = pos.inCycle ? weekGoal(pos.week) : null, t = CY.tiers.find(x => x.id === tier);
+  $('#taskTitle').textContent = pos.inCycle ? 'W' + pos.week + ' · 周' + WEEK[d.getDay()] : '今日清单';
+  $('#taskRing').textContent = list.length ? marks.filter(id => list.some(x => x.id === id)).length + ' / ' + list.length : '—';
+  $('#taskList').innerHTML = list.length ? list.map(x => {
+    const on = marks.indexOf(x.id) >= 0;
+    return '<li><button class="task' + (on ? ' is-done' : '') + '" type="button" data-task="' + x.id + '" aria-pressed="' + on + '">' +
+      '<span class="task__box"></span><span class="task__txt">' + segStr(x.text) + '</span><span class="task__min">' + x.min + ' MIN</span></button></li>';
+  }).join('') : '<li class="task-empty">' + (pos.idx < 0 ? '本期 ' + CY_DAYS + ' 天从 ' + md(CY_START) + ' 开始' : '本期已收口') + '</li>';
+  $('#tiers').innerHTML = CY.tiers.map(x =>
+    '<button class="tier' + (x.id === tier ? ' is-active' : '') + '" type="button" data-tier="' + x.id + '" aria-pressed="' + (x.id === tier) + '">' +
+    segStr(x.label) + '<span>' + x.total + '</span></button>').join('');
+  $$('#tiers [data-tier]').forEach(b => b.addEventListener('click', () => {
+    if (b.dataset.tier === tier) return;
+    tier = b.dataset.tier; store.set('tier:' + key, tier);
+    renderTasks();
+    const items = $$('#taskList .task');
+    if (window.gsap && !window.matchMedia('(prefers-reduced-motion: reduce)').matches)
+      gsap.from(items, {opacity: 0, y: 6, duration: .26, ease: 'power2.out', stagger: .04, clearProps: 'all'});
+  }));
+  const foot = $('#taskFoot');
+  foot.innerHTML = (plan.empty ? '' : segStr(t.label + '（' + t.total + '）：' + t.split)) +
+    (goal ? '<span class="panel__ramp">本周 ' + goal.hours + ' · ' + segStr(goal.goal) + '</span>' : '');
   $$('[data-task]').forEach(btn => btn.addEventListener('click', () => {
-    const id = btn.dataset.task;
-    let cur = store.get(key, []);
-    const wasFull = cur.length === list.length;
-    const on = cur.indexOf(id) < 0;
-    cur = on ? cur.concat([id]) : cur.filter(x => x !== id);
-    store.set(key, cur);
+    const id = btn.dataset.task, cur = list.map(x => x.id);
+    let m = store.get(tkey, []);
+    if (!Array.isArray(m)) m = [];
+    const wasFull = cur.every(x => m.indexOf(x) >= 0);
+    const on = m.indexOf(id) < 0;
+    m = on ? m.concat([id]) : m.filter(x => x !== id);
+    store.set(tkey, m);
     btn.classList.toggle('is-done', on);
     btn.setAttribute('aria-pressed', String(on));
-    $('#taskRing').textContent = cur.length + ' / ' + list.length;
+    $('#taskRing').textContent = m.filter(x => cur.indexOf(x) >= 0).length + ' / ' + list.length;
 
-    /* 四件事全部划掉 = 今天真的留下一道痕迹，写入真实数据，格历/统计/痕迹流同源更新。
+    /* 清单全部划掉 = 今天真的留下一道痕迹，写入真实数据，格历/统计/痕迹流同源更新。
        取消勾选时移除这条自动记录，操作可逆，不制造假数据。 */
-    const isFull = cur.length === list.length;
+    const isFull = cur.every(x => m.indexOf(x) >= 0);
     const autoId = 'auto-' + todayKey();
     if (isFull !== wasFull){
       let mine = store.get('traces', []);
+      if (!Array.isArray(mine)) mine = [];
       if (isFull){
         if (!mine.some(t => t.id === autoId)) mine.push({
-          id: autoId, date: todayKey(), topic: '全卷综合', kind: '随手记', type: '随手记', title: '今日四件事全部划掉',
-          body: '资料分析、数量关系、错题复盘、一页纸，四件都做完了。',
-          note: '划掉比记住更重要', questions: null, minutes: null, score: null,
+          id: autoId, date: todayKey(), topic: '全卷综合', kind: '随手记', type: '随手记', title: '今日清单全部划掉',
+          body: list.map(x => x.text).join('、') + '，都做完了。',
+          note: null, questions: null, minutes: null, score: null,
           src: '作战台 · 今日清单自动留痕', by: 'me'
         });
       } else mine = mine.filter(t => t.id !== autoId);
       store.set('traces', mine);
-      renderCalendar.played = true;
-      renderCalendar(); renderStats(); renderFilters(); renderTraces(); renderClock();
+      renderCycle.played = true; renderCalendar.played = true;
+      renderCalendar(); renderCycle(); renderStats(); renderFilters(); renderTraces(); renderClock(); renderTrack();
       const cell = $('#calGrid .cell--today');
       if (cell && window.gsap && isFull){
         gsap.fromTo(cell,
           {backgroundColor:'#F4F6F5', boxShadow:'inset 0 0 0 0px rgba(23,70,58,0)'},
           {backgroundColor:'#17463A', boxShadow:'inset 0 0 0 2px rgba(23,70,58,1)', duration:.5, ease:'power2.out', clearProps:'backgroundColor,boxShadow'});
       }
-      toast(isFull ? '四件事都划掉了，今天这一格已经填上' : '已取消一条勾选，今天这一格回到空格');
+      toast(isFull ? '清单都划掉了，今天这一格已经填上' : '已取消一条勾选，今天这一格回到空格');
     }
   }));
 }
 
-/* ---------- 时间轴 ---------- */
-const msDate = d => addDays(EX.date, -d);
+/* ---------- 90 天周期（规划 v6） ----------
+   记忆点仍是「一格一天」：90 格 = 13 周 × 7 天，一行一周（按 v6 周次，周六起），
+   格子状态由 traces 的真实日期驱动；整卷日、块首日、期末周、爬坡目标都落在格子上。 */
+const CY = C.cycle;
+const CY_START = parseDT(CY.start + 'T00:00:00');
+const CY_END = parseDT(CY.end + 'T00:00:00');
+const CY_DAYS = dayDiff(CY_END, CY_START) + 1;
+const EXAM_N = '①②③④';
+function cyclePos(d){
+  const idx = dayDiff(d, CY_START);
+  return { idx: idx, week: Math.floor(idx / 7) + 1, inCycle: idx >= 0 && idx < CY_DAYS };
+}
+function blockOf(key){ return CY.blocks.find(b => key >= b.start && key <= b.end) || null; }
+/* 周目标：第 1 / 2 周取爬坡曲线；周起始日落在块 B 即「期末」；其余为常态 */
+function weekGoal(week){
+  const b = blockOf(dateKey(addDays(CY_START, (week - 1) * 7)));
+  return CY.ramp.find(r => Array.isArray(r.weeks) ? r.weeks.indexOf(week) >= 0
+    : (r.weeks === 'final') === !!(b && b.id === 'B')) || CY.ramp[CY.ramp.length - 1];
+}
+const isFinalWeek = week => weekGoal(week).weeks === 'final';
+const SHORT = { '资料分析': '资', '判断推理': '判', '数量关系': '数', '言语理解': '言', '科学推理': '科', '申论': '申' };
+const shortOf = c => SHORT[c] || String(c || '').charAt(0);
+function weekRange(week){
+  const a = addDays(CY_START, (week - 1) * 7);
+  return md(a) + '–' + md(addDays(a, 6));
+}
+
+function renderCycle(){
+  const g = $('#cycleGrid'); if (!g) return;
+  const traceDays = new Set(allTraces().map(t => t.date)), tkey = todayKey(), n = now();
+  const exams = {}; CY.exams.forEach(e => { exams[e.date] = e.n; });
+  const weeks = Math.ceil(CY_DAYS / 7);
+  let html = '<div class="cyc__cor" aria-hidden="true"></div>';
+  html += ['六','日','一','二','三','四','五'].map(h => '<div class="cyc__h" aria-hidden="true">' + h + '</div>').join('');
+  let passed = 0, marked = 0;
+  for (let w = 0; w < weeks; w++){
+    const final = isFinalWeek(w + 1), goal = weekGoal(w + 1);
+    html += '<div class="cyc__wk' + (final ? ' is-final' : '') + '"><b>W' + (w + 1) + '</b><span>' + weekRange(w + 1) + '</span>' +
+      '<em>' + (final ? '期末' : goal.hours) + '</em></div>';
+    for (let i = 0; i < 7; i++){
+      const idx = w * 7 + i;
+      if (idx >= CY_DAYS){ html += '<div class="cyc__day cyc__day--pad" aria-hidden="true"></div>'; continue; }
+      const d = addDays(CY_START, idx), k = dateKey(d), dd = dayDiff(d, n);
+      const done = traceDays.has(k), today = k === tkey, blk = blockOf(k);
+      if (dd < 0) passed++;
+      if (done) marked++;
+      const cls = ['cyc__day', 'is-b-' + (blk ? blk.id : 'none'),
+        done ? 'is-done' : '', today ? 'is-today' : '', dd > 0 ? 'is-future' : 'is-past',
+        exams[k] ? 'is-exam' : '', (blk && k === blk.start) ? 'is-first' : ''];
+      /* 格子里写当天主讲课：整卷 > 期末 / 缓冲 / 收口 > 主讲（周六与双讲段周日标 ×2）＋ 穿插讲 */
+      const seg = CY.lectures.find(x => k >= x.from && k <= x.to) || {};
+      const ex = CY.extra.filter(e => e.date === k).map(e => e.course);
+      let name = '', short = '';
+      /* 周六一律双讲（周节奏模板：周六 2 讲）；周日只在「周末双讲」段双讲 */
+      const dbl = (i === 0 && seg.kind === 'main') || (!!seg.weekendDouble && i === 1);
+      if (exams[k]){ name = '整卷 ' + EXAM_N[exams[k] - 1]; short = EXAM_N[exams[k] - 1]; }
+      else if (seg.kind === 'final'){ name = '期末'; short = '末'; }
+      else if (seg.kind === 'buffer'){ name = '补讲 / 缓冲'; short = '补'; }
+      else if (seg.kind === 'wrap'){ name = '三张 A4 收口'; short = '收'; }
+      else if (seg.course){
+        name = seg.course + (dbl ? ' ×2' : ''); short = shortOf(seg.course) + (dbl ? '×2' : '');
+        /* 穿插讲跟在主讲后面（窄屏只留主讲简称） */
+        if (ex.length) name += ' ＋' + ex.join('／');
+      }
+      else if (ex.length){ name = ex.join(' / ') + ' 1 讲'; short = ex.map(shortOf).join('/'); }
+      const label = full(d) + ' · 第 ' + (idx + 1) + ' 天' + (blk ? ' · ' + blk.label : '') +
+        (name ? '，' + name : '') + (done ? '，留过痕迹' : '') + (today ? '，今天' : '');
+      html += '<button class="' + cls.join(' ') + '" type="button" data-day="' + k + '" aria-label="' + esc(label) + '">' +
+        '<b class="cyc__d">' + d.getDate() + '</b><span class="cyc__c" data-s="' + esc(short) + '">' + segStr(name) + '</span>' +
+        (done ? '<span class="cyc__tick" aria-hidden="true"></span>' : '') + '</button>';
+    }
+  }
+  g.innerHTML = html;
+  $$('#cycleGrid [data-day]').forEach(b => b.addEventListener('click', () => openDay(b.dataset.day, b)));
+
+  /* 状态行：全部来自真实日期与痕迹 */
+  const p = cyclePos(n);
+  const papers = CY.exams.filter(e => dayDiff(parseDT(e.date + 'T00:00:00'), n) < 0).length;
+  const goal = p.inCycle ? weekGoal(p.week) : null;
+  $('#cycStatus').innerHTML =
+    '<span>' + (p.inCycle ? '周期第 <b>' + (p.idx + 1) + '</b> / ' + CY_DAYS + ' 天'
+      : p.idx < 0 ? '本期 <b>' + CY_DAYS + '</b> 天还没开始' : '本期已收口') + '</span>' +
+    '<span>已过 ' + passed + ' 天 · 留痕 ' + marked + ' 天</span>' +
+    (goal ? '<span>本周 W' + p.week + ' · ' + goal.hours + ' · ' + segStr(goal.goal) + '</span>' : '') +
+    '<span>整卷 ' + papers + ' / ' + CY.exams.length + ' 次</span>';
+
+  /* 块图例：点一下只看这一块（键盘可达），再点取消 */
+  $('#cycBudget').textContent = '时间预算 ' + CY.budget.need + ' / 可用 ' + CY.budget.have + '，余量 ' + CY.budget.left;
+  const bl = $('#cycleBlocks');
+  if (bl && !bl.dataset.built){
+    bl.dataset.built = '1';
+    bl.innerHTML = CY.blocks.map(b => '<button class="cycblk" type="button" data-block="' + b.id + '" aria-pressed="false">' +
+      '<b>' + b.label + '</b><span>' + md(parseDT(b.start + 'T00:00:00')) + ' → ' + md(parseDT(b.end + 'T00:00:00')) + '</span>' +
+      '<span>' + b.lectures + ' 讲</span></button>').join('');
+    $$('#cycleBlocks [data-block]').forEach(btn => btn.addEventListener('click', () => {
+      const id = btn.dataset.block, on = btn.getAttribute('aria-pressed') !== 'true';
+      $$('#cycleBlocks [data-block]').forEach(x => x.setAttribute('aria-pressed', 'false'));
+      btn.setAttribute('aria-pressed', String(on));
+      g.classList.toggle('is-focus', on);
+      g.dataset.focus = on ? id : '';
+    }));
+  }
+  /* 首屏逐格铺开：90 格，总 stagger 恒定 ≤ .5s；带静态兜底时不重放 */
+  const cells = $$('#cycleGrid .cyc__day:not(.cyc__day--pad)');
+  if (window.gsap && !renderCycle.played && !window.matchMedia('(prefers-reduced-motion: reduce)').matches){
+    renderCycle.played = true;
+    gsap.from(cells, {opacity:0, y:6, duration:.36, ease:'power2.out',
+      stagger:Math.min(.008, .5 / Math.max(1, cells.length)), clearProps:'all'});
+  }
+}
+
+/* ---------- 课程总账 / 本期目标（细线表格，数据取 v6 原文） ---------- */
+function renderTables(){
+  const cs = CY.courses;
+  const tot = cs.reduce((a,c) => a + c.total, 0), dn = cs.reduce((a,c) => a + c.done, 0);
+  $('#courseTable').innerHTML =
+    '<div class="ptable__head"><span>课程总账</span><span class="ptable__sum">' + dn + ' / ' + tot + ' 讲已学 · 剩 ' + (tot - dn) + ' 讲</span></div>' +
+    '<table class="ptable"><thead><tr><th>课程</th><th>已学 / 总讲</th><th>剩余</th><th>排期</th></tr></thead><tbody>' +
+    cs.map(c => '<tr><th scope="row">' + segStr(c.name) + '<span class="pbar"><i style="width:0%" data-w="' + Math.round(c.done / c.total * 100) + '"></i></span></th>' +
+      '<td class="num">' + c.done + ' / ' + c.total + '</td><td class="num">' + (c.total - c.done) + '</td><td>' + segStr(c.plan) + '</td></tr>').join('') +
+    '<tr class="is-sum"><th scope="row">合计</th><td class="num">' + dn + ' / ' + tot + '</td><td class="num">' + (tot - dn) + '</td>' +
+      '<td>时间预算 ' + CY.budget.need + ' / 可用 ' + CY.budget.have + '，余量 ' + CY.budget.left + '</td></tr></tbody></table>' +
+    '<p class="ptable__foot">已学为规划 v6 成文时的口径，不随页面自动变动</p>';
+  $('#goalTable').innerHTML =
+    '<div class="ptable__head"><span>本期目标</span><span class="ptable__sum">仍然不设分数线、不刷模拟题、不看排名</span></div>' +
+    '<table class="ptable"><thead><tr><th>#</th><th>目标</th><th>证据</th></tr></thead><tbody>' +
+    CY.goals.map(g => '<tr><td class="num">' + g.n + '</td><th scope="row">' + segStr(g.text) + '</th><td>' + segStr(g.proof) + '</td></tr>').join('') +
+    '</tbody></table>';
+  /* 进度条：进入视口后从 0 长到真实比例（无 GSAP / 减少动态时直接到位） */
+  $$('[data-w]').forEach(el => {
+    const w = el.dataset.w + '%';
+    if (!window.gsap || !window.ScrollTrigger || window.matchMedia('(prefers-reduced-motion: reduce)').matches){ el.style.width = w; return; }
+    gsap.to(el, {width: w, duration:.9, ease:'power2.out',
+      scrollTrigger:{trigger: el, start:'top 92%', once: true}});
+  });
+}
+
+/* ---------- 限时练得分率轨道（数据 = 痕迹里带得分的限时记录） ---------- */
+function trackPoints(){
+  return allTraces().filter(t => typeof t.score === 'number' && !isNaN(t.score))
+    .filter(t => ['限时真题', '套卷', '诊断基线'].indexOf(traceKind(t)) >= 0)
+    .slice().sort((a,b) => a.date.localeCompare(b.date)).slice(-8);
+}
+function renderTrack(){
+  const box = $('#scoreTrack'); if (!box) return;
+  const pts = trackPoints(), lo = 50, hi = 100, last = pts[pts.length - 1];
+  $('#scoreGap').textContent = pts.length ? '最近 ' + last.score + '% · ' + md(parseDT(last.date + 'T00:00:00')) : '还没有限时记录';
+  if (pts.length < 2){
+    box.innerHTML = '<p class="track__empty">做过限时练后，这里会按日期画出得分率</p>';
+    $('#scoreNow').textContent = ''; $('#scoreTarget').textContent = CY.target + '% 线 · 连续 3 次 ≥80%';
+    return;
+  }
+  const X = i => 4 + i * 92 / (pts.length - 1);              // 留 4% 边距，点不被裁
+  const Y = v => Math.max(0, Math.min(100, (v - lo) / (hi - lo) * 100));
+  const line = pts.map((p, i) => X(i).toFixed(2) + ',' + (100 - Y(p.score)).toFixed(2)).join(' ');
+  const refTop = 100 - Y(CY.target);
+  box.innerHTML =
+    '<span class="track__ref" style="top:' + refTop + '%"><i></i>' + CY.target + '%</span>' +
+    '<svg class="track__line" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true"><polyline points="' + line + '"/></svg>' +
+    pts.map((p, i) => '<span class="track__pt' + (p.score >= CY.target ? ' is-ok' : '') + (i === pts.length - 1 ? ' is-last' : '') + '"' +
+      ' style="left:' + X(i) + '%;top:' + (100 - Y(p.score)) + '%"' +
+      ' title="' + md(parseDT(p.date + 'T00:00:00')) + ' · ' + p.score + '% · ' + esc(traceTopic(p)) + '"' +
+      ' aria-label="' + md(parseDT(p.date + 'T00:00:00')) + '，' + p.score + '%"></span>').join('') +
+    '<span class="track__lab" style="left:4%">' + md(parseDT(pts[0].date + 'T00:00:00')) + '</span>' +
+    '<span class="track__lab" style="left:96%">' + md(parseDT(last.date + 'T00:00:00')) + '</span>';
+  if (window.gsap && !window.matchMedia('(prefers-reduced-motion: reduce)').matches){
+    const pl = box.querySelector('polyline'), len = pl.getTotalLength();
+    gsap.fromTo(pl, {strokeDasharray: len, strokeDashoffset: len}, {strokeDashoffset: 0, duration: .9, ease: 'power2.out'});
+    gsap.from(box.querySelectorAll('.track__pt'), {opacity: 0, scale: .4, duration: .3, ease: 'power2.out',
+      stagger: .07, clearProps: 'opacity,transform'});
+  }
+  $('#scoreNow').textContent = traceTopic(last) + ' · ' + md(parseDT(last.date + 'T00:00:00'));
+  $('#scoreTarget').textContent = '实心 = ≥' + CY.target + '% · 空心 = 未到';
+}
+
+/* ---------- 排期节点（规划 v6 的绝对日期） ---------- */
+const msDate = m => parseDT(m.date + 'T00:00:00');
 function nextMilestone(){
-  for (const m of C.milestones) if (dayDiff(msDate(m.d), now()) >= 0) return m;
+  for (const m of C.milestones) if (dayDiff(msDate(m), now()) >= 0) return m;
   return C.milestones[C.milestones.length - 1];
 }
 function renderAxis(){
-  const m = nextMilestone(), dt = msDate(m.d), left = dayDiff(dt, now());
-  $('#nextLabel').textContent = m.label + (m.d === 0 ? '' : ' · D-' + m.d);
+  const m = nextMilestone(), dt = msDate(m), left = dayDiff(dt, now());
+  const blk = CY.blocks.find(b => b.id === m.block);
+  $('#nextLabel').textContent = m.label;
   $('#nextDesc').innerHTML = segStr(m.desc);
   $('#nextDate').textContent = full(dt);
-  $('#nextLeft').textContent = left === 0 ? '就是今天' : '还有 ' + left + ' 天';
-  const sc = latestScore(allTraces()), target = C.baseline.target;
-  const pct = Math.max(0, Math.min(100, sc / target * 100));
-  $('#scoreFill').style.width = pct + '%';
-  $('#scoreDot').style.left = pct + '%';
-  $('#scoreNow').textContent = sc.toFixed(1) + ' 分 · 当前';
-  $('#scoreTarget').textContent = target + ' 分 · 目标';
-  $('#scoreGap').textContent = sc >= target ? ('已超目标 ' + (sc-target).toFixed(1) + ' 分') : ('还差 ' + (target-sc).toFixed(1) + ' 分');
+  $('#nextLeft').textContent = left > 0 ? '还有 ' + left + ' 天' : left === 0 ? '就是今天' : '本期已过';
+  $('#nextBlock').textContent = blk ? blk.label + ' · ' + md(parseDT(blk.start + 'T00:00:00')) + ' → ' + md(parseDT(blk.end + 'T00:00:00')) : '';
 
   const done = store.get('milestones', []), nx = nextMilestone(), t = now();
+  const marks = (Array.isArray(done) ? done : []).map(String).filter(x => C.milestones.some(y => y.id === x));
   $('#milestoneList').innerHTML = C.milestones.map(x => {
-    const d = msDate(x.d), passed = dayDiff(d, t) < 0, ok = done.indexOf(x.d) >= 0;
-    const isNext = x.d === nx.d && !passed;
+    const d = msDate(x), passed = dayDiff(d, t) < 0, ok = marks.indexOf(x.id) >= 0;
+    const isNext = x.id === nx.id && !passed;
     const cls = [passed ? 'is-past' : '', isNext ? 'is-next' : ''].filter(Boolean).join(' ');
-    return '<li class="' + cls + '"><div class="axis__d">D-' + x.d + '</div><div class="axis__date">' + md(d) + '</div>' +
+    return '<li class="' + cls + '"><div class="axis__d">' + segStr('块 ' + x.block) + '</div><div class="axis__date">' + md(d) + '</div>' +
       '<div class="axis__label">' + segStr(x.label) + '</div><p class="axis__desc">' + segStr(x.desc) + '</p>' +
-      '<button class="axis__btn' + (ok ? ' is-done' : '') + '" type="button" data-ms="' + x.d + '" aria-pressed="' + ok + '">' +
+      '<button class="axis__btn' + (ok ? ' is-done' : '') + '" type="button" data-ms="' + x.id + '" aria-pressed="' + ok + '">' +
       '<i data-lucide="' + (ok ? 'check' : 'circle') + '"></i>' + (ok ? '已过' : '标完成') + '</button></li>';
   }).join('');
   $$('[data-ms]').forEach(b => b.addEventListener('click', () => {
-    const d = Number(b.dataset.ms);
-    let cur = store.get('milestones', []);
-    const on = cur.indexOf(d) < 0;
-    store.set('milestones', on ? cur.concat([d]) : cur.filter(x => x !== d));
+    const id = b.dataset.ms;
+    let cur = (Array.isArray(store.get('milestones', [])) ? store.get('milestones', []) : []).map(String).filter(x => C.milestones.some(y => y.id === x));
+    const on = cur.indexOf(id) < 0;
+    store.set('milestones', on ? cur.concat([id]) : cur.filter(x => x !== id));
     b.classList.toggle('is-done', on);
     b.setAttribute('aria-pressed', String(on));
     b.innerHTML = '<i data-lucide="' + (on ? 'check' : 'circle') + '"></i>' + (on ? '已过' : '标完成');
@@ -494,7 +735,7 @@ function softDelete(id){
   undoDel = { id: id, isMine: isMine, rec: rec };
   pendingDel = null;
   renderCalendar.played = true;
-  renderCalendar(); renderStats(); renderFilters(); renderTraces(); renderClock();
+  renderCalendar(); renderCycle(); renderStats(); renderFilters(); renderTraces(); renderClock(); renderTrack();
   toast('已删除这道痕迹', true);
 }
 function undoDelete(){
@@ -509,7 +750,7 @@ function undoDelete(){
     store.set('deletedTraces', (Array.isArray(gone) ? gone : []).filter(x => x !== u.id));
   }
   renderCalendar.played = true;
-  renderCalendar(); renderStats(); renderFilters(); renderTraces(); renderClock();
+  renderCalendar(); renderCycle(); renderStats(); renderFilters(); renderTraces(); renderClock(); renderTrack();
   toast('已撤销，痕迹回到原处');
 }
 function exportTraces(){
@@ -644,7 +885,7 @@ function initForms(){
 /* ---------- 全局 ---------- */
 function initGlobal(){
   $('#quoteBtn').addEventListener('click', nextQuote);
-  $('#refBtn').addEventListener('click', e => openRefs(e.currentTarget));
+  ['#refBtn', '#refBtn2'].forEach(id => { const b = $(id); if (b) b.addEventListener('click', e => openRefs(e.currentTarget)); });
   $('#drawerClose').addEventListener('click', () => closeLayer($('#drawer')));
   $('#exportBtn').addEventListener('click', exportTraces);
   initCalNav();
@@ -681,7 +922,7 @@ function initMotion(){
 }
 
 function renderAll(){
-  renderClock(); renderCalendar(); renderStats(); renderTasks(); renderAxis(); renderFilters(); renderTraces();
+  renderClock(); renderCalendar(); renderCycle(); renderStats(); renderTasks(); renderAxis(); renderTrack(); renderFilters(); renderTraces();
   segmentStatic(); icons();
 }
 
@@ -689,7 +930,8 @@ function init(){
   /* 若 HTML 已带静态兜底（不跑 JS 的预览环境也能看完整页面），JS 直接接管，
      不重放首屏逐格淡入，避免先闪一下再出现。 */
   if ($('#calGrid .cell')) renderCalendar.played = true;
-  segmentStatic(); initGlobal(); initQuote(); initForms(); renderAll(); initMotion();
+  if ($('#cycleGrid .cyc__day')) renderCycle.played = true;
+  segmentStatic(); initGlobal(); initQuote(); initForms(); renderAll(); renderTables(); initMotion();
   let lastDay = todayKey();
   setInterval(() => { if (todayKey() !== lastDay){ lastDay = todayKey(); renderCalendar.played = false; renderAll(); } }, 60000);
 }

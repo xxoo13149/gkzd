@@ -40,6 +40,7 @@ i[data-lucide]{width:14px;height:14px;stroke-width:1.8;display:inline-block;vert
 /* 动态文本均由 segStr() 按词插入 <wbr>，可以安全启用 keep-all */
 .trace__title,.trace__body,.trace__note,.trace__src,.trace__type,.trace__by,.trace__nums,
 .axis__label,.axis__desc,.task__txt,.ref__title,.ref li,.dayitem__t,.dayitem__b,.dayitem__n,
+.cyc__c,.cyc__wk,.cycblk,.tier,.nextcard__block,.ptable th,.ptable td,.track__empty,
 .quote,.todayflag,.nextcard__left p{word-break:keep-all}
 p,blockquote,.axis__desc,.trace__body{text-wrap:pretty}
 .nowrap{white-space:nowrap}
@@ -185,7 +186,7 @@ p,blockquote,.axis__desc,.trace__body{text-wrap:pretty}
 .todayflag.is-done{color:var(--red-soft)}
 
 /* ---------- 接下来 ---------- */
-.axis{background:var(--green);color:var(--surface);padding:46px 0 54px}
+.plan{background:var(--green);color:var(--surface);padding:46px 0 54px}
 .nextcard{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:18px 26px;border:1px solid var(--line-light);padding:20px 22px;margin-bottom:26px;border-radius:var(--r)}
 .nextcard__label{font-size:11px;letter-spacing:.08em;color:rgba(233,236,235,.6)}
 .nextcard h3{font-size:23px;font-weight:800;margin:6px 0 6px;color:var(--red-soft)}
@@ -254,6 +255,108 @@ p,blockquote,.axis__desc,.trace__body{text-wrap:pretty}
   font-weight:600;color:var(--red);line-height:1.7;text-decoration:underline wavy rgba(192,57,43,.25);text-underline-offset:5px}
 .trace__src{display:block;font-family:var(--mono);font-size:10px;color:var(--muted);margin-top:11px}
 .trace-empty{text-align:center;padding:44px 0;color:var(--muted);font-size:12.5px}
+
+/* ---------- 今日清单：三档切换（细线分段，无阴影、无位移） ---------- */
+.tiers{display:flex;border-bottom:1px solid var(--line)}
+.tier{flex:1;display:flex;align-items:center;justify-content:center;gap:6px;padding:8px 6px;font-size:12px;color:var(--ink-2);
+  border-right:1px solid var(--line);transition:background .2s,color .2s}
+.tier:last-child{border-right:0}
+.tier span{font-family:var(--mono);font-size:9.5px;color:var(--muted)}
+.tier:hover{background:var(--surface-2)}
+.tier:active{background:var(--surface-2)}
+.tier.is-active{background:var(--ink);color:var(--surface)}
+.tier.is-active span{color:var(--red-soft)}
+.panel__ramp{display:block;margin-top:3px;color:var(--green);font-weight:600}
+.task-empty{padding:26px 18px;color:var(--muted);font-size:12.5px}
+.tbtn--ghost{border-color:var(--line-light);color:rgba(233,236,235,.86)}
+.tbtn--ghost:hover{background:rgba(233,236,235,.08);border-color:var(--surface);color:var(--surface)}
+
+/* ---------- 本期规划 v6：90 天周期墙（「一格一天」的横向延续：一行一周） ---------- */
+.cyc-status{display:flex;flex-wrap:wrap;border-top:1px solid var(--line-light);border-bottom:1px solid var(--line-light);margin-bottom:14px}
+.cyc-status span{flex:1 1 auto;padding:9px 14px 9px 0;font-family:var(--mono);font-size:11.5px;letter-spacing:.04em;color:rgba(233,236,235,.72)}
+.cyc-status span + span{padding-left:14px;border-left:1px solid var(--line-light)}
+.cyc-status b{color:var(--red-soft);font-weight:700}
+.cyc-panel{background:var(--surface);color:var(--ink);border:1px solid var(--line-strong);border-radius:var(--r);overflow:hidden}
+.cyc-panel__head{display:flex;align-items:stretch;justify-content:space-between;gap:12px;border-bottom:1px solid var(--line);flex-wrap:wrap}
+.cyc-blocks{display:flex;flex-wrap:wrap}
+.cycblk{display:flex;align-items:baseline;gap:8px;padding:9px 14px;border-right:1px solid var(--line);
+  font-family:var(--mono);font-size:10.5px;color:var(--muted);text-align:left;transition:background .2s,color .2s}
+.cycblk b{font-size:12px;font-weight:700;color:var(--ink)}
+.cycblk:hover{background:var(--surface-2)}
+.cycblk[aria-pressed="true"]{background:var(--ink);color:rgba(233,236,235,.7)}
+.cycblk[aria-pressed="true"] b{color:var(--surface)}
+.cyc-panel__sum{display:flex;align-items:center;padding:9px 14px;margin-left:auto;font-family:var(--mono);font-size:10.5px;color:var(--muted)}
+.cyc{display:grid;grid-template-columns:104px repeat(7,minmax(0,1fr));gap:1px;background:var(--line)}
+.cyc__h{padding:6px 0;text-align:center;font-family:var(--mono);font-size:10.5px;letter-spacing:.1em;color:var(--muted);background:var(--surface-2)}
+.cyc__wk{display:flex;flex-direction:column;justify-content:center;padding:6px 10px;background:var(--surface)}
+.cyc__wk b{font-family:var(--mono);font-size:11.5px;font-weight:700;letter-spacing:.06em}
+.cyc__wk span{font-family:var(--mono);font-size:9.5px;color:var(--muted);margin-top:1px}
+.cyc__wk em{font-style:normal;font-size:9.5px;color:var(--ink-2);margin-top:1px}
+.cyc__wk.is-final{background:repeating-linear-gradient(45deg,var(--surface) 0 5px,rgba(22,33,30,.05) 5px 6px)}
+.cyc__day{position:relative;display:flex;flex-direction:column;align-items:flex-start;justify-content:center;gap:1px;
+  min-height:48px;padding:5px 9px;background:var(--surface);text-align:left;transition:background .2s}
+.cyc__d{font-family:var(--mono);font-size:11px;line-height:1.2;font-weight:400;color:var(--muted)}
+.cyc__c{font-size:12px;line-height:1.35;color:var(--ink);max-width:100%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.cyc__day.is-future::after{content:"";position:absolute;inset:3px;border:1px dashed var(--line-strong);pointer-events:none}
+.cyc__day.is-done{background:var(--green)}
+.cyc__day.is-done .cyc__d{color:rgba(233,236,235,.72)}
+.cyc__day.is-done .cyc__c{color:var(--surface)}
+.cyc__day.is-today{box-shadow:inset 0 0 0 2px var(--red);z-index:1}
+.cyc__day.is-today .cyc__d{color:var(--red);font-weight:700}
+.cyc__day.is-today.is-done .cyc__d{color:var(--red-soft)}
+.cyc__day.is-exam{box-shadow:inset 0 3px 0 var(--green)}
+.cyc__day.is-exam.is-done{box-shadow:inset 0 3px 0 var(--surface)}
+.cyc__day.is-exam.is-today{box-shadow:inset 0 0 0 2px var(--red),inset 0 4px 0 var(--red)}
+.cyc__day.is-first::before{content:"";position:absolute;left:0;top:0;bottom:0;width:3px;background:var(--ink);pointer-events:none}
+.cyc__day.is-done.is-first::before{background:var(--surface)}
+.cyc__tick{position:absolute;right:6px;top:5px;width:7px;height:4px;border-left:2px solid var(--red-soft);border-bottom:2px solid var(--red-soft);transform:rotate(-45deg)}
+.cyc__day:hover{background:var(--surface-2)}
+.cyc__day.is-done:hover{background:var(--green-2)}
+.cyc__day:active{background:var(--surface-2)}
+.cyc__day:focus-visible{outline:2px solid var(--red);outline-offset:-3px;z-index:2}
+.cyc__day--pad{background:repeating-linear-gradient(45deg,var(--surface) 0 5px,rgba(22,33,30,.045) 5px 6px);pointer-events:none}
+/* 点块图例后只留这一块，其余淡出（不动位移） */
+.cyc.is-focus .cyc__day{opacity:.24;transition:opacity .25s}
+.cyc.is-focus .cyc__day.is-b-A{opacity:1}
+.cyc.is-focus[data-focus="B"] .cyc__day.is-b-A{opacity:.24}
+.cyc.is-focus[data-focus="C"] .cyc__day.is-b-A{opacity:.24}
+.cyc.is-focus[data-focus="B"] .cyc__day.is-b-B{opacity:1}
+.cyc.is-focus[data-focus="C"] .cyc__day.is-b-C{opacity:1}
+.lg--exam{height:8px;border:0;border-top:3px solid var(--green)}
+.lg--first{width:8px;border:0;border-left:3px solid var(--ink)}
+
+/* ---------- 下一个坎 + 限时练得分率轨道 ---------- */
+.nextcard__block{font-family:var(--mono);font-size:10.5px;color:rgba(233,236,235,.6);margin-top:6px}
+.plan .axis__d{white-space:nowrap}
+#goalTable tbody th{white-space:nowrap}
+section[id]{scroll-margin-top:66px}
+.track{position:relative;height:84px;margin:16px 0 22px}
+.track__line{position:absolute;inset:0;width:100%;height:100%;overflow:visible}
+.track__line polyline{fill:none;stroke:rgba(233,236,235,.55);stroke-width:1.2;vector-effect:non-scaling-stroke}
+.track__ref{position:absolute;left:0;right:0;border-top:1px dashed rgba(233,236,235,.3);font-family:var(--mono);font-size:9.5px;color:rgba(233,236,235,.55);pointer-events:none}
+.track__ref i{position:absolute;right:0;top:-15px;font-style:normal}
+.track__pt{position:absolute;width:9px;height:9px;border-radius:50%;border:1.5px solid var(--red-soft);background:var(--green);transform:translate(-50%,-50%)}
+.track__pt.is-ok{background:var(--red-soft)}
+.track__pt.is-last{width:12px;height:12px;box-shadow:0 0 0 3px rgba(227,167,159,.2)}
+.track__lab{position:absolute;top:calc(100% + 5px);transform:translateX(-50%);font-family:var(--mono);font-size:9.5px;color:rgba(233,236,235,.5)}
+.track__empty{padding:26px 0;font-size:12px;color:rgba(233,236,235,.6)}
+
+/* ---------- 课程总账 / 本期目标（细线表格） ---------- */
+.plan-grid{display:grid;grid-template-columns:minmax(0,1.25fr) minmax(0,1fr);gap:14px;margin:18px 0 26px}
+.ptable-box{background:var(--surface);color:var(--ink);border:1px solid var(--line-strong);border-radius:var(--r);overflow:hidden}
+.ptable__head{display:flex;align-items:baseline;justify-content:space-between;gap:4px 12px;flex-wrap:wrap;padding:11px 16px;border-bottom:1px solid var(--line);font-size:13px;font-weight:700}
+.ptable__sum{font-family:var(--mono);font-size:10px;font-weight:400;color:var(--muted)}
+.ptable{width:100%;border-collapse:collapse;font-size:12px;line-height:1.6}
+.ptable th,.ptable td{padding:9px 16px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top;font-weight:400}
+.ptable thead th{font-family:var(--mono);font-size:10px;letter-spacing:.06em;color:var(--muted);padding:7px 16px;background:var(--surface-2);white-space:nowrap}
+.ptable tbody th{font-weight:700}
+.ptable tbody tr:last-child th,.ptable tbody tr:last-child td{border-bottom:0}
+.ptable .num{font-family:var(--mono);font-size:11px;color:var(--ink-2);white-space:nowrap}
+.ptable tr.is-sum th,.ptable tr.is-sum td{border-top:1px solid var(--line-strong);background:var(--surface-2)}
+.pbar{display:block;width:100%;max-width:150px;height:3px;background:var(--line);margin-top:6px}
+.pbar i{display:block;height:100%;background:var(--green)}
+.ptable__foot{padding:8px 16px;font-size:10.5px;color:var(--muted);border-top:1px solid var(--line)}
+
 
 /* ---------- 痕迹删除（就地两段式：细线、无 hover 位移、可撤销） ---------- */
 .trace__del{display:grid;place-items:center;flex:none;width:26px;height:26px;
@@ -325,6 +428,12 @@ p,blockquote,.axis__desc,.trace__body{text-wrap:pretty}
 /* ---------- 响应式 ---------- */
 @media (max-width:900px){
   .today-grid{grid-template-columns:1fr}
+  .plan-grid{grid-template-columns:1fr}
+  .cyc{grid-template-columns:62px repeat(7,minmax(0,1fr))}
+  .cyc__wk{padding:6px 8px}
+  .cyc__wk span{display:none}
+  .cyc__day{padding:5px 7px}
+  .cyc__c{font-size:11.5px}
   .axis-list{grid-template-columns:repeat(4,minmax(0,1fr));row-gap:20px}
   .axis-list li{border-right:1px solid var(--line-light);padding-right:14px}
 }
@@ -355,9 +464,31 @@ p,blockquote,.axis__desc,.trace__body{text-wrap:pretty}
   .sec-head{align-items:flex-start;flex-direction:column;gap:8px}
   .sec-acts{width:100%}
   .sec-acts .tbtn{flex:1}
-  .today,.axis,.traces{padding:34px 0 40px}
+  .today,.plan,.traces{padding:34px 0 40px}
   .nextcard{grid-template-columns:1fr;padding:16px}
   .nextcard__right{align-items:flex-start;flex-direction:row;gap:14px;justify-content:flex-start}
+  .cyc-status span{padding:8px 0;border-left:0!important;border-bottom:1px dashed var(--line-light)}
+  .cyc-status span:last-child{border-bottom:0}
+  .cyc{grid-template-columns:30px repeat(7,minmax(0,1fr))}
+  .cyc__h{padding:5px 0;font-size:9.5px}
+  .cyc__wk{padding:4px 0;align-items:center}
+  .cyc__wk b{font-size:9px;letter-spacing:0}
+  .cyc__wk em{display:none}
+  .cyc__day{min-height:50px;padding:4px 3px;align-items:center}
+  .cyc__d{font-size:9.5px}
+  .cyc__c{font-size:0}
+  .cyc__c::after{content:attr(data-s);font-size:11px;line-height:1.35}
+  .cyc__tick{right:2px;top:4px}
+  .cyc-panel__head{align-items:flex-start}
+  .cycblk{padding:7px 10px}
+  #goalTable tbody th{white-space:normal}
+  .cyc-panel__sum{padding:6px 10px 8px;width:100%;margin-left:0;border-top:1px solid var(--line)}
+  .cyc-legend{gap:10px;font-size:10px;padding:9px 10px}
+  .cyc-legend span:nth-child(5),.cyc-legend span.cal-legend__hint{display:none}
+  .ptable th,.ptable td{padding:8px 10px}
+  .ptable thead th{padding:6px 10px}
+  .ptable__head{padding:9px 10px}
+  .track{height:70px}
   .axis-list{grid-template-columns:1fr;row-gap:0}
   .axis-list li{border-right:0;border-bottom:1px solid var(--line-light);padding:0 0 18px 18px}
   .axis-list li::before{top:3px;left:-4px}

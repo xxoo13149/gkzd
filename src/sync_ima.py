@@ -60,8 +60,10 @@ SKIP_PUBLISH = os.environ.get("GK_SKIP_PUBLISH", "") == "1"
 
 # 由 JS 渲染、需要写进静态兜底的容器
 IDS = ["topDate", "calSub", "cdLine", "phaseLine", "streakLine", "calNav", "calGrid", "stats",
-       "taskRing", "taskList", "quoteText", "quoteSrc", "todayFlag",
-       "nextLabel", "nextDesc", "nextDate", "nextLeft", "scoreNow", "scoreTarget", "scoreGap",
+       "taskTitle", "taskRing", "tiers", "taskList", "taskFoot", "quoteText", "quoteSrc", "todayFlag",
+       "cycStatus", "cycleBlocks", "cycBudget", "cycleGrid",
+       "nextLabel", "nextDesc", "nextBlock", "nextDate", "nextLeft", "scoreGap", "scoreTrack", "scoreNow", "scoreTarget",
+       "courseTable", "goalTable",
        "milestoneList", "traceFilters", "traceList", "fType", "examPresets"]
 
 FIELDS = ["id", "date", "topic", "kind", "type", "title", "body", "note", "minutes", "questions", "score", "src", "by"]
@@ -196,7 +198,7 @@ def replace_container(html, id_, inner):
 
 
 def refresh_fallback():
-    """用真实浏览器渲染后的 DOM 覆盖 index.html 的 24 个容器（幂等）。"""
+    """用真实浏览器渲染后的 DOM 覆盖 index.html 的各容器（幂等）。"""
     from playwright.async_api import async_playwright
 
     async def grab():
@@ -211,12 +213,13 @@ def refresh_fallback():
             await pg.evaluate("() => { try{localStorage.clear()}catch(e){} }")
             await pg.reload(wait_until="load", timeout=30000)
             await pg.wait_for_timeout(2400)  # 等数字滚动、GSAP 结束
+            # 进度条等「进入视口才展开」的内容：先滚到底让其到位，否则兜底里会被导成 0%
+            await pg.evaluate("""() => { const h = document.body.scrollHeight;
+              if (window.__lenis) window.__lenis.scrollTo(h, {immediate: true}); else window.scrollTo(0, h); }""")
+            await pg.wait_for_timeout(1500)
             data = await pg.evaluate("""(ids) => {
               const o = {};
               ids.forEach(id => { const e = document.getElementById(id); o[id] = e ? e.innerHTML : null; });
-              const f = document.getElementById('scoreFill'), d = document.getElementById('scoreDot');
-              o._fill = f ? f.style.width : '';
-              o._dot  = d ? d.style.left : '';
               return o;
             }""", IDS)
             await b.close()
@@ -238,11 +241,9 @@ def refresh_fallback():
             continue
         html = new_html
         done.append(id_)
-    html = re.sub(r'id="scoreFill"[^>]*>', 'id="scoreFill" style="width:%s">' % data["_fill"], html, count=1)
-    html = re.sub(r'id="scoreDot"[^>]*>', 'id="scoreDot" style="left:%s">' % data["_dot"], html, count=1)
-    # 发版前洁净度断言：源 index.html 里只有 calGrid 含 data-day，
-    # 数量必须恰好等于本次导出，否则说明容器外还有历史残留格子（会竖排），拒绝上线。
-    expect = (data.get("calGrid") or "").count("data-day=")
+    # 发版前洁净度断言：源 index.html 里只有月历 #calGrid 与 90 天周期墙 #cycleGrid 含 data-day，
+    # 总数必须恰好等于这两处的本次导出，否则说明容器外还有历史残留格子（会竖排），拒绝上线。
+    expect = (data.get("calGrid") or "").count("data-day=") + (data.get("cycleGrid") or "").count("data-day=")
     actual = html.count("data-day=")
     if expect and actual != expect:
         raise RuntimeError("静态兜底格子残留：导出 %d 格，HTML 内却有 %d 个 data-day，拒绝发版" % (expect, actual))
