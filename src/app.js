@@ -18,7 +18,7 @@ let SEG = null;
 try { SEG = new Intl.Segmenter('zh', {granularity:'word'}); } catch(e){}
 /* 文本节点专用：按词插 <wbr>，配合 CSS keep-all 避免中文被拆词 */
 /* 标点不单独断开，跟随前一个词，否则会跑到行首 */
-const PUNCT = /^[，。、；：？！）》」』」』%·…—\s]+$/;
+const PUNCT = /^[，。、；：？！）》」』」』%·…—\/\s]+$/;
 function segParts(t){
   const parts = SEG ? Array.from(SEG.segment(String(t))).map(x => x.segment) : [String(t)];
   return parts.map((p,i) => (i && !PUNCT.test(p) ? '<wbr>' : '') + esc(p)).join('');
@@ -490,20 +490,30 @@ function renderCycle(){
       let name = '', short = '';
       /* 周六一律双讲（周节奏模板：周六 2 讲）；周日只在「周末双讲」段双讲 */
       const dbl = (i === 0 && seg.kind === 'main') || (!!seg.weekendDouble && i === 1);
+      /* 格内一行 =「日号 + 当天主讲课」，不折行（短文本按钮不允许末行孤字）；
+         「双讲」与穿插讲放在 .cyc__x，中窄屏隐藏，最窄屏退成单字简称 */
+      let full2 = '';
       if (exams[k]){ name = '整卷 ' + EXAM_N[exams[k] - 1]; short = EXAM_N[exams[k] - 1]; }
       else if (seg.kind === 'final'){ name = '期末'; short = '末'; }
-      else if (seg.kind === 'buffer'){ name = '补讲 / 缓冲'; short = '补'; }
-      else if (seg.kind === 'wrap'){ name = '三张 A4 收口'; short = '收'; }
+      else if (seg.kind === 'buffer'){ name = '补讲'; full2 = '补讲 / 缓冲'; short = '补'; }
+      else if (seg.kind === 'wrap'){ name = 'A4 收口'; full2 = '三张 A4 收口'; short = '收'; }
       else if (seg.course){
-        name = seg.course + (dbl ? ' ×2' : ''); short = shortOf(seg.course) + (dbl ? '×2' : '');
-        /* 穿插讲跟在主讲后面（窄屏只留主讲简称） */
-        if (ex.length) name += ' ＋' + ex.join('／');
+        name = seg.course; short = shortOf(seg.course) + (dbl ? '双' : '');
+        if (dbl) full2 = seg.course + ' 双讲';
+        if (ex.length) full2 = (full2 || seg.course) + ' ＋' + ex.join('／');
       }
       else if (ex.length){ name = ex.join(' / ') + ' 1 讲'; short = ex.map(shortOf).join('/'); }
+      const shown = full2 || name;
       const label = full(d) + ' · 第 ' + (idx + 1) + ' 天' + (blk ? ' · ' + blk.label : '') +
-        (name ? '，' + name : '') + (done ? '，留过痕迹' : '') + (today ? '，今天' : '');
+        (shown ? '，' + shown : '') + (done ? '，留过痕迹' : '') + (today ? '，今天' : '');
+      let body = segStr(name);
+      if (full2 !== name && full2){
+        /* 把主讲之后的「双讲 / 穿插」包进可隐藏的 .cyc__x */
+        const head = segStr(seg.course || name), rest = full2.slice((seg.course || name).length);
+        body = head + '<span class="cyc__x">' + segStr(rest) + '</span>';
+      }
       html += '<button class="' + cls.join(' ') + '" type="button" data-day="' + k + '" aria-label="' + esc(label) + '">' +
-        '<b class="cyc__d">' + d.getDate() + '</b><span class="cyc__c" data-s="' + esc(short) + '">' + segStr(name) + '</span>' +
+        '<b class="cyc__d">' + d.getDate() + '</b><span class="cyc__c" data-s="' + esc(short) + '">' + body + '</span>' +
         (done ? '<span class="cyc__tick" aria-hidden="true"></span>' : '') + '</button>';
     }
   }

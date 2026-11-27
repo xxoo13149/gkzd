@@ -38,11 +38,13 @@ i[data-lucide]{width:14px;height:14px;stroke-width:1.8;display:inline-block;vert
 /* 中文断行：短文本按词断，正文避免孤字 */
 [data-seg],h1,h2,h3,.tbtn,.chip,.cal-legend span,.panel__count,.nextcard__label{word-break:keep-all;text-wrap:balance}
 /* 动态文本均由 segStr() 按词插入 <wbr>，可以安全启用 keep-all */
-.trace__title,.trace__body,.trace__note,.trace__src,.trace__type,.trace__by,.trace__nums,
+.panel__foot,.trace__title,.trace__body,.trace__note,.trace__src,.trace__type,.trace__by,.trace__nums,
 .axis__label,.axis__desc,.task__txt,.ref__title,.ref li,.dayitem__t,.dayitem__b,.dayitem__n,
 .cyc__c,.cyc__wk,.cycblk,.tier,.nextcard__block,.ptable th,.ptable td,.track__empty,
 .quote,.todayflag,.nextcard__left p{word-break:keep-all}
 p,blockquote,.axis__desc,.trace__body{text-wrap:pretty}
+/* 知识库痕迹里的短句批注：按词断 + 行宽均衡，末行不留孤字（官方 check-text-wrap） */
+.trace__note,.trace__body,.panel__foot,.axis__desc,.dayitem__b,.dayitem__n,.nextcard__left p:last-child,.task__txt,.cyc__c{text-wrap:balance}
 .nowrap{white-space:nowrap}
 
 /* ---------- 顶栏 ---------- */
@@ -175,7 +177,7 @@ p,blockquote,.axis__desc,.trace__body{text-wrap:pretty}
 .task.is-done .task__txt{color:var(--muted)}
 .task.is-done .task__txt::after{width:100%}
 .task__min{font-family:var(--mono);font-size:10px;color:var(--muted);white-space:nowrap;margin-top:4px}
-.panel__foot{font-size:11px;color:var(--muted);padding:11px 18px;border-top:1px solid var(--line)}
+.panel__foot{font-size:11px;color:var(--muted);padding:11px 18px;border-top:1px solid var(--line);word-break:keep-all;text-wrap:balance}
 .quote-panel{background:var(--green);color:var(--surface);padding:20px 22px;display:flex;flex-direction:column;border-radius:var(--r)}
 .quote-panel__label{font-size:11px;letter-spacing:.08em;color:rgba(233,236,235,.62)}
 .quote{font-size:19px;font-weight:700;line-height:1.65;margin:16px 0 18px;max-width:26em;transition:opacity .25s ease}
@@ -293,10 +295,11 @@ p,blockquote,.axis__desc,.trace__body{text-wrap:pretty}
 .cyc__wk span{font-family:var(--mono);font-size:9.5px;color:var(--muted);margin-top:1px}
 .cyc__wk em{font-style:normal;font-size:9.5px;color:var(--ink-2);margin-top:1px}
 .cyc__wk.is-final{background:repeating-linear-gradient(45deg,var(--surface) 0 5px,rgba(22,33,30,.05) 5px 6px)}
-.cyc__day{position:relative;display:flex;flex-direction:column;align-items:flex-start;justify-content:center;gap:1px;
-  min-height:48px;padding:5px 9px;background:var(--surface);text-align:left;transition:background .2s}
+.cyc__day{position:relative;display:flex;align-items:baseline;justify-content:flex-start;gap:6px;
+  min-height:40px;padding:6px 9px;background:var(--surface);text-align:left;white-space:nowrap;transition:background .2s}
 .cyc__d{font-family:var(--mono);font-size:11px;line-height:1.2;font-weight:400;color:var(--muted)}
-.cyc__c{font-size:12px;line-height:1.35;color:var(--ink);max-width:100%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.cyc__c{font-size:12px;line-height:1.35;color:var(--ink);min-width:0;overflow:hidden;text-overflow:ellipsis}
+.cyc__day.is-future::after{inset:2px}
 .cyc__day.is-future::after{content:"";position:absolute;inset:3px;border:1px dashed var(--line-strong);pointer-events:none}
 .cyc__day.is-done{background:var(--green)}
 .cyc__day.is-done .cyc__d{color:rgba(233,236,235,.72)}
@@ -432,8 +435,9 @@ section[id]{scroll-margin-top:66px}
   .cyc{grid-template-columns:62px repeat(7,minmax(0,1fr))}
   .cyc__wk{padding:6px 8px}
   .cyc__wk span{display:none}
-  .cyc__day{padding:5px 7px}
+  .cyc__day{padding:6px 6px;gap:4px}
   .cyc__c{font-size:11.5px}
+  .cyc__c .cyc__x{display:none}
   .axis-list{grid-template-columns:repeat(4,minmax(0,1fr));row-gap:20px}
   .axis-list li{border-right:1px solid var(--line-light);padding-right:14px}
 }
@@ -474,10 +478,11 @@ section[id]{scroll-margin-top:66px}
   .cyc__wk{padding:4px 0;align-items:center}
   .cyc__wk b{font-size:9px;letter-spacing:0}
   .cyc__wk em{display:none}
-  .cyc__day{min-height:50px;padding:4px 3px;align-items:center}
+  .cyc__day{min-height:46px;padding:4px 3px;align-items:center;gap:2px}
   .cyc__d{font-size:9.5px}
   .cyc__c{font-size:0}
   .cyc__c::after{content:attr(data-s);font-size:11px;line-height:1.35}
+  .cyc__c .cyc__x{display:none}
   .cyc__tick{right:2px;top:4px}
   .cyc-panel__head{align-items:flex-start}
   .cycblk{padding:7px 10px}
